@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AMPA · Farmacia Espejo · Adra</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* ── UI styles ── */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;background:#f0f3f7;min-height:100vh}
+.card{background:#fff;border:1px solid #dde3ea;border-radius:10px;padding:16px;margin-bottom:12px}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;transition:opacity .15s}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.lbl{font-size:11px;font-weight:700;color:#7f8c8d;margin-bottom:4px;display:block;text-transform:uppercase}
+.inp{padding:8px 10px;border:1px solid #d5d8dc;border-radius:7px;font-size:13px;color:#2c3e50;outline:none}
+.ni{width:56px;padding:5px 4px;border:1px solid #ccc;border-radius:5px;font-size:12px;text-align:center}
+.ti{width:84px;padding:5px 4px;border:1px solid #ccc;border-radius:5px;font-size:12px;text-align:center}
+.drop-zone{border:2px dashed #c5ccd4;border-radius:10px;padding:28px;text-align:center;cursor:pointer;background:#fafbfc;transition:all .15s}
+.drop-zone.drag-over{border-color:#1a5276;background:#eaf0f8}
+.tab-btn{padding:9px 18px;font-weight:600;cursor:pointer;font-size:13px;border:none;border-radius:8px 8px 0 0;transition:background .15s,color .15s}
+.obs-card-r{border-radius:6px;padding:10px 14px;margin-bottom:8px;border-left:4px solid #ccc}
+.tx-badge{padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;white-space:nowrap;cursor:pointer}
+@media(max-width:600px){.grid3{grid-template-columns:1fr!important}.grid4{grid-template-columns:1fr 1fr!important}}
+</style>
+</head>
+<body>
+<input type="file" id="fileInput" accept="image/*,.xlsx,.xls" style="display:none" onchange="handleFileChange(this.files[0])">
+<div id="app"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════
+//  CONFIGURACIÓN — edita estos valores para activar las funciones IA
+//  Opción A (uso personal):  apiKey = 'sk-ant-...'
+//  Opción B (versión pública): endpoint = 'https://tu-worker.workers.dev'
+// ════════════════════════════════════════════════════════════════════
+const CFG = {
+  endpoint: 'https://ampa-farmacia-espejo.jespejo18.workers.dev',
+  apiKey:   '',   // No necesaria — gestionada por Cloudflare Worker
+  model:    'claude-sonnet-4-20250514'
+};
+
+// ─── Variables de módulo (no serializables en state) ────────────────
+let _fileRef = null;
+let _imgUrl  = null;
+
+// ─── Utilidades ─────────────────────────────────────────────────────
+const r1  = n => Math.round(n*10)/10;
+const rnd = n => Math.round(n);
+const avg = arr => arr.length ? r1(arr.reduce((a,b)=>a+b,0)/arr.length) : null;
+const sdv = arr => {
+  if(arr.length<2) return 0;
+  const m=arr.reduce((a,b)=>a+b,0)/arr.length;
+  return r1(Math.sqrt(arr.reduce((s,x)=>s+(x-m)*(x-m),0)/arr.length));
+};
+const nn  = v => Number(v)||0;
+const nv  = v => v===''?'':(isNaN(+v)?v:+v);
+const fds = d => { try{return new Date(d+'T12:00').toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'});}catch{return d;} };
+const fdm = d => { try{return new Date(d+'T12:00').toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'});}catch{return d;} };
+const fdl = d => { try{return new Date(d+'T12:00').toLocaleDateString('es-ES',{day:'2-digit',month:'long',year:'numeric'});}catch{return d;} };
+const todayS   = () => new Date().toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'});
+const todayISO = () => new Date().toISOString().slice(0,10);
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+// ─── Motor clínico ───────────────────────────────────────────────────
+function smean(m) {
+  const s=nn(m.r2sys),S=nn(m.r3sys),d=nn(m.r2dia),D=nn(m.r3dia);
+  if(!s||!S||!d||!D) return null;
+  return {sys:rnd((s+S)/2),dia:rnd((d+D)/2)};
+}
+function sessionAna(m) {
+  const mn=smean(m); if(!mn) return null;
+  const s2=nn(m.r2sys),s3=nn(m.r3sys),d2=nn(m.r2dia),d3=nn(m.r3dia);
+  return {
+    mean:mn,elevated:mn.sys>=135||mn.dia>=85,
+    ascPAS:s3>s2+2,ascPAD:d3>d2+2,
+    anomR1Dia:!!(m.r1dia&&nn(m.r1dia)<50),
+    anomPP:(mn.sys-mn.dia)<20,
+    deltaSys:nn(m.r1sys)?rnd(nn(m.r1sys)-(s2+s3)/2):null,
+    deltaDia:nn(m.r1dia)?rnd(nn(m.r1dia)-(d2+d3)/2):null
+  };
+}
+function calcStats(meas) {
+  const valid=meas.filter(m=>smean(m));
+  if(!valid.length) return null;
+  const morn=valid.filter(m=>m.session==='morning');
+  const aft=valid.filter(m=>m.session==='afternoon');
+  const ms=arr=>arr.map(m=>smean(m));
+  const gavg=arr=>({sys:avg(arr.map(x=>x.sys)),dia:avg(arr.map(x=>x.dia))});
+  const global=gavg(ms(valid));
+  const mornG=morn.length?gavg(ms(morn)):null;
+  const aftG=aft.length?gavg(ms(aft)):null;
+  const pasList=valid.map(m=>smean(m).sys);
+  const padList=valid.map(m=>smean(m).dia);
+  const mornPasList=morn.map(m=>smean(m).sys);
+  const mornPadList=morn.map(m=>smean(m).dia);
+  const aftPasList=aft.map(m=>smean(m).sys);
+  const aftPadList=aft.map(m=>smean(m).dia);
+  const alerts=valid.filter(m=>nn(m.r1sys)).map(m=>r1(nn(m.r1sys)-(nn(m.r2sys)+nn(m.r3sys))/2));
+  const avgOf=arr=>arr.length?rnd(arr.reduce((a,b)=>a+b,0)/arr.length):null;
+  const hrs=valid.filter(m=>nn(m.hr)).map(m=>nn(m.hr));
+  const mHrs=morn.filter(m=>nn(m.hr)).map(m=>nn(m.hr));
+  const aHrs=aft.filter(m=>nn(m.hr)).map(m=>nn(m.hr));
+  const elevCount=valid.filter(m=>{const x=smean(m);return x&&(x.sys>=135||x.dia>=85);}).length;
+  const mornElDia=morn.filter(m=>{const x=smean(m);return x&&x.dia>=85;}).length;
+  const alertaDeltas=valid.filter(m=>nn(m.r1sys)).map(m=>({
+    date:m.date,session:m.session,
+    deltaSys:rnd(nn(m.r1sys)-(nn(m.r2sys)+nn(m.r3sys))/2),
+    deltaDia:nn(m.r1dia)?rnd(nn(m.r1dia)-(nn(m.r2dia)+nn(m.r3dia))/2):null
+  }));
+  return {
+    global,mornG,aftG,
+    globalEl:global.sys>=135||global.dia>=85,
+    mornEl:!!(mornG&&(mornG.sys>=135||mornG.dia>=85)),
+    aftEl:!!(aftG&&(aftG.sys>=135||aftG.dia>=85)),
+    optimo:global.sys<130&&global.dia<80,
+    validDays:[...new Set(valid.map(m=>m.date))].length,
+    totalSessions:valid.length,mornCount:morn.length,aftCount:aft.length,
+    avgAlert:alerts.length?r1(alerts.reduce((a,b)=>a+b,0)/alerts.length):0,
+    avgHR:avgOf(hrs),mornHR:avgOf(mHrs),aftHR:avgOf(aHrs),
+    elevCount,mornElDia,alertaDeltas,
+    pasSd:sdv(pasList),padSd:sdv(padList),
+    pasMax:pasList.length?Math.max(...pasList):null,pasMin:pasList.length?Math.min(...pasList):null,
+    padMax:padList.length?Math.max(...padList):null,padMin:padList.length?Math.min(...padList):null,
+    mornPasSd:sdv(mornPasList),mornPadSd:sdv(mornPadList),
+    aftPasSd:sdv(aftPasList),aftPadSd:sdv(aftPadList),
+    mornPasMax:mornPasList.length?Math.max(...mornPasList):null,mornPasMin:mornPasList.length?Math.min(...mornPasList):null,
+    mornPadMax:mornPadList.length?Math.max(...mornPadList):null,mornPadMin:mornPadList.length?Math.min(...mornPadList):null,
+    aftPasMax:aftPasList.length?Math.max(...aftPasList):null,aftPasMin:aftPasList.length?Math.min(...aftPasList):null,
+    aftPadMax:aftPadList.length?Math.max(...aftPadList):null,aftPadMin:aftPadList.length?Math.min(...aftPadList):null
+  };
+}
+function getStatus(st,cS,cD) {
+  if(!st) return {text:'Sin datos',color:'#888',bg:'#f5f5f5',badge:'---',semColor:'#ccc'};
+  if(st.globalEl) return {text:'Valores por encima de objetivos AMPA',color:'#c0392b',bg:'#fdecea',badge:'ATENCIÓN',semColor:'#e74c3c'};
+  if(st.mornEl&&!st.aftEl) return {text:'Media global OK · Media mañana por encima del umbral',color:'#b7770d',bg:'#fef9e7',badge:'ATENCIÓN PARCIAL',semColor:'#f39c12'};
+  if(cS&&cD){
+    const cEl=nn(cS)>=140||nn(cD)>=90;
+    if(cEl&&!st.globalEl) return {text:'PA dentro de objetivos AMPA · Posible bata blanca',color:'#1a5276',bg:'#eaf4fb',badge:'BATA BLANCA',semColor:'#3498db'};
+    if(!cEl&&st.globalEl) return {text:'PA elevada según criterios AMPA · Posible HTA enmascarada',color:'#8e44ad',bg:'#f5eef8',badge:'ENMASCARADA',semColor:'#8e44ad'};
+  }
+  if(st.optimo) return {text:'PA dentro del objetivo óptimo (< 130/80 mmHg)',color:'#1e8449',bg:'#eafaf1',badge:'ÓPTIMO',semColor:'#27ae60'};
+  return {text:'PA dentro de objetivos AMPA (< 135/85 mmHg)',color:'#1e8449',bg:'#eafaf1',badge:'CONTROLADA',semColor:'#27ae60'};
+}
+
+// ─── Constructores SVG ───────────────────────────────────────────────
+function buildEvolSVG(sorted,treatments) {
+  if(sorted.length<2) return "<p style='text-align:center;color:#aaa;padding:20px;font-size:12px'>M&iacute;nimo 2 sesiones para el gr&aacute;fico</p>";
+  const W=920,H=270,pl=70,pr=28,pt=28,pb=60;
+  const iW=W-pl-pr,iH=H-pt-pb,minY=55,maxY=165;
+  const yf=v=>pt+iH-(v-minY)/(maxY-minY)*iH;
+  const xf=i=>sorted.length>1?pl+i*iW/(sorted.length-1):pl+iW/2;
+  const pts=[];
+  for(let i=0;i<sorted.length;i++){const s=sorted[i],m=smean(s);if(m)pts.push({x:xf(i),sy:yf(m.sys),dy:yf(m.dia),sv:m.sys,session:s.session,date:s.date,el:m.sys>=135||m.dia>=85});}
+  const mg=pts.filter(p=>p.session==='morning'),ag=pts.filter(p=>p.session==='afternoon');
+  const mkp=arr=>arr.map(p=>p.x.toFixed(0)+','+p.sy.toFixed(0)).join(' ');
+  const mkd=arr=>arr.map(p=>p.x.toFixed(0)+','+p.dy.toFixed(0)).join(' ');
+  let ln='';
+  if(mg.length>1)ln+="<polyline points='"+mkp(mg)+"' fill='none' stroke='#27ae60' stroke-width='2.3' stroke-linejoin='round'/>";
+  if(ag.length>1)ln+="<polyline points='"+mkp(ag)+"' fill='none' stroke='#e67e22' stroke-width='2.3' stroke-linejoin='round'/>";
+  if(mg.length>1)ln+="<polyline points='"+mkd(mg)+"' fill='none' stroke='#27ae60' stroke-width='1.6' stroke-dasharray='5,3' stroke-linejoin='round'/>";
+  if(ag.length>1)ln+="<polyline points='"+mkd(ag)+"' fill='none' stroke='#e67e22' stroke-width='1.6' stroke-dasharray='5,3' stroke-linejoin='round'/>";
+  let ci='';
+  for(const p of mg){const f=p.el?'#e74c3c':'#27ae60';ci+="<circle cx='"+p.x.toFixed(0)+"' cy='"+p.sy.toFixed(0)+"' r='5' fill='"+f+"' stroke='#fff' stroke-width='1.5'/><circle cx='"+p.x.toFixed(0)+"' cy='"+p.dy.toFixed(0)+"' r='3.5' fill='#27ae60' stroke='#fff' stroke-width='1'/><text x='"+p.x.toFixed(0)+"' y='"+(p.sy-8).toFixed(0)+"' font-size='8.5' fill='"+(p.el?'#e74c3c':'#1e8449')+"' text-anchor='middle' font-weight='bold'>"+p.sv+"</text>";}
+  for(const p of ag){const f=p.el?'#e74c3c':'#e67e22';ci+="<circle cx='"+p.x.toFixed(0)+"' cy='"+p.sy.toFixed(0)+"' r='5' fill='"+f+"' stroke='#fff' stroke-width='1.5'/><circle cx='"+p.x.toFixed(0)+"' cy='"+p.dy.toFixed(0)+"' r='3.5' fill='#e67e22' stroke='#fff' stroke-width='1'/><text x='"+p.x.toFixed(0)+"' y='"+(p.sy-8).toFixed(0)+"' font-size='8.5' fill='"+(p.el?'#e74c3c':'#b7770d')+"' text-anchor='middle' font-weight='bold'>"+p.sv+"</text>";}
+  let txLines='';
+  if(treatments&&treatments.length){
+    const allDates=sorted.map(s=>s.date).sort();
+    const d0=new Date(allDates[0]+'T12:00').getTime(),d1=new Date(allDates[allDates.length-1]+'T12:00').getTime(),span=d1-d0||1;
+    for(const t of treatments){const td=new Date(t.date+'T12:00').getTime();if(td<d0||td>d1)continue;const tx=pl+(td-d0)/span*iW;const col=t.type==='cambio'?'#e67e22':'#8e44ad';const lbl=(t.type==='cambio'?'C: ':'I: ')+t.description.substring(0,22)+(t.description.length>22?'...':'');txLines+="<line x1='"+tx.toFixed(0)+"' y1='"+pt+"' x2='"+tx.toFixed(0)+"' y2='"+(H-pb)+"' stroke='"+col+"' stroke-width='1.5' stroke-dasharray='4,3' opacity='0.7'/><rect x='"+(tx-4).toFixed(0)+"' y='"+(H-pb+2)+"' width='8' height='8' fill='"+col+"' rx='1'/><text x='"+tx.toFixed(0)+"' y='"+(H-pb+20)+"' font-size='7.5' fill='"+col+"' text-anchor='middle' font-weight='600'>"+lbl+"</text>";}
+  }
+  let xl='';for(const p of pts){const col=p.session==='morning'?'#27ae60':'#e67e22';xl+="<text transform='rotate(-45,"+p.x.toFixed(0)+","+(H-pb+36)+")' x='"+p.x.toFixed(0)+"' y='"+(H-pb+36)+"' font-size='7.5' fill='"+col+"' text-anchor='end'>"+fds(p.date)+' '+(p.session==='morning'?'M':'T')+"</text>";}
+  let grid='',yl='';
+  for(const v of[80,100,120,140])grid+="<line x1='"+pl+"' x2='"+(W-pr)+"' y1='"+yf(v).toFixed(0)+"' y2='"+yf(v).toFixed(0)+"' stroke='#eee' stroke-width='0.7'/>";
+  for(const v of[60,80,100,120,140,160]){if(v>=minY&&v<=maxY)yl+="<text x='"+(pl-5)+"' y='"+(yf(v)+3).toFixed(0)+"' font-size='8' fill='#aaa' text-anchor='end'>"+v+"</text>";}
+  const ref="<line x1='"+pl+"' x2='"+(W-pr)+"' y1='"+yf(135).toFixed(0)+"' y2='"+yf(135).toFixed(0)+"' stroke='#e74c3c' stroke-dasharray='6,4' stroke-width='1.4'/><text x='"+(W-pr+4)+"' y='"+(yf(135)+4).toFixed(0)+"' font-size='9' fill='#e74c3c'>135</text><line x1='"+pl+"' x2='"+(W-pr)+"' y1='"+yf(85).toFixed(0)+"' y2='"+yf(85).toFixed(0)+"' stroke='#e67e22' stroke-dasharray='6,4' stroke-width='1.4'/><text x='"+(W-pr+4)+"' y='"+(yf(85)+4).toFixed(0)+"' font-size='9' fill='#e67e22'>85</text>";
+  const ref130="<line x1='"+pl+"' x2='"+(W-pr)+"' y1='"+yf(130).toFixed(0)+"' y2='"+yf(130).toFixed(0)+"' stroke='#27ae60' stroke-dasharray='3,3' stroke-width='1' opacity='0.5'/><text x='"+(W-pr+4)+"' y='"+(yf(130)+4).toFixed(0)+"' font-size='8' fill='#27ae60' opacity='0.7'>130</text>";
+  const leg="<rect x='"+pl+"' y='10' width='14' height='3' fill='#27ae60' rx='1'/><text x='"+(pl+18)+"' y='14' font-size='8.5' fill='#27ae60'>PAS Ma&ntilde;ana</text><rect x='"+(pl+112)+"' y='10' width='14' height='3' fill='#e67e22' rx='1'/><text x='"+(pl+130)+"' y='14' font-size='8.5' fill='#e67e22'>PAS Tarde</text><line x1='"+(pl+218)+"' y1='12' x2='"+(pl+232)+"' y2='12' stroke='#27ae60' stroke-width='1.5' stroke-dasharray='4,2'/><text x='"+(pl+236)+"' y='15' font-size='8.5' fill='#27ae60'>PAD Ma&ntilde;ana</text><line x1='"+(pl+330)+"' y1='12' x2='"+(pl+344)+"' y2='12' stroke='#e67e22' stroke-width='1.5' stroke-dasharray='4,2'/><text x='"+(pl+348)+"' y='15' font-size='8.5' fill='#e67e22'>PAD Tarde</text><line x1='"+(pl+442)+"' y1='12' x2='"+(pl+456)+"' y2='12' stroke='#27ae60' stroke-width='1' stroke-dasharray='3,3' opacity='0.7'/><text x='"+(pl+460)+"' y='15' font-size='8.5' fill='#27ae60'>Objetivo &lt;130</text>";
+  return "<svg viewBox='0 0 "+W+" "+H+"' xmlns='http://www.w3.org/2000/svg' style='width:100%;border:1px solid #e0e0e0;border-radius:6px;background:#fafcff'><line x1='"+pl+"' y1='"+(H-pb)+"' x2='"+(W-pr)+"' y2='"+(H-pb)+"' stroke='#bbb' stroke-width='1'/><line x1='"+pl+"' y1='"+pt+"' x2='"+pl+"' y2='"+(H-pb)+"' stroke='#bbb' stroke-width='1'/>"+grid+ref130+ref+txLines+ln+ci+xl+yl+leg+"</svg>";
+}
+function buildBarSVG(st) {
+  if(!st||(!st.mornG&&!st.aftG)) return '';
+  const W=420,H=195,pl=46,pr=12,pt=28,pb=42,iH=H-pt-pb;
+  let maxV=140;if(st.mornG&&st.mornG.sys>maxV)maxV=st.mornG.sys;if(st.aftG&&st.aftG.sys>maxV)maxV=st.aftG.sys;maxV+=18;
+  const minV=40,yf=v=>pt+iH-(v-minV)/(maxV-minV)*iH,bw=46,gap=10,gg=26;
+  const bars=[];let x=pl+10;
+  if(st.mornG){bars.push({x,v:st.mornG.sys,c:'#27ae60',l1:'PAS',l2:'Ma&ntilde;ana',el:st.mornG.sys>=135,dia:false});x+=bw+gap;bars.push({x,v:st.mornG.dia,c:'#27ae60',l1:'PAD',l2:'Ma&ntilde;ana',el:st.mornG.dia>=85,dia:true});x+=bw+gg;}
+  if(st.aftG){bars.push({x,v:st.aftG.sys,c:'#e67e22',l1:'PAS',l2:'Tarde',el:st.aftG.sys>=135,dia:false});x+=bw+gap;bars.push({x,v:st.aftG.dia,c:'#e67e22',l1:'PAD',l2:'Tarde',el:st.aftG.dia>=85,dia:true});}
+  let bS='';
+  for(const b of bars){const bh=Math.max(yf(minV)-yf(b.v),2);const fc=b.el?'#c0392b':'#333';const fw=b.el?'bold':'600';bS+="<rect x='"+b.x+"' y='"+yf(b.v).toFixed(0)+"' width='"+bw+"' height='"+bh.toFixed(0)+"' fill='"+b.c+"' opacity='"+(b.dia?'0.62':'0.9')+"' rx='4'/><text x='"+(b.x+bw/2)+"' y='"+(yf(b.v)-6).toFixed(0)+"' font-size='12' fill='"+fc+"' text-anchor='middle' font-weight='"+fw+"'>"+b.v+(b.el?' !':'')+"</text><text x='"+(b.x+bw/2)+"' y='"+(H-pb+16)+"' font-size='9.5' text-anchor='middle' fill='"+b.c+"' font-weight='700'>"+b.l1+"</text><text x='"+(b.x+bw/2)+"' y='"+(H-pb+28)+"' font-size='9' text-anchor='middle' fill='#888'>"+b.l2+"</text>";}
+  let ref='',yl='';
+  for(const v of[135,85]){if(v>=minV&&v<=maxV){const col=v===135?'#e74c3c':'#e67e22';ref+="<line x1='"+pl+"' x2='"+(W-pr)+"' y1='"+yf(v).toFixed(0)+"' y2='"+yf(v).toFixed(0)+"' stroke='"+col+"' stroke-dasharray='5,3' stroke-width='1.2'/><text x='"+(W-pr)+"' y='"+(yf(v)-3).toFixed(0)+"' font-size='8' fill='"+col+"' text-anchor='end'>"+v+"</text>";}}
+  for(const v of[60,80,100,120,140]){if(v>=minV&&v<=maxV)yl+="<text x='"+(pl-5)+"' y='"+(yf(v)+3).toFixed(0)+"' font-size='8' fill='#aaa' text-anchor='end'>"+v+"</text>";}
+  return "<svg viewBox='0 0 "+W+" "+H+"' xmlns='http://www.w3.org/2000/svg' style='width:100%;max-width:420px;display:block;border:1px solid #e0e0e0;border-radius:6px;background:#fafcff'><line x1='"+pl+"' y1='"+(H-pb)+"' x2='"+(W-pr)+"' y2='"+(H-pb)+"' stroke='#bbb'/><line x1='"+pl+"' y1='"+pt+"' x2='"+pl+"' y2='"+(H-pb)+"' stroke='#bbb'/>"+ref+bS+yl+"</svg>";
+}
+function buildAlertaSVG(alertaDeltas) {
+  const d=alertaDeltas.filter(x=>x.deltaSys!==null);
+  if(d.length<2) return "<p style='text-align:center;color:#aaa;padding:12px;font-size:12px'>Datos insuficientes para el gr&aacute;fico de efecto alerta</p>";
+  const W=920,H=215,pl=60,pr=20,pt=30,pb=55,iW=W-pl-pr,iH=H-pt-pb;
+  const maxD=Math.max(...d.map(x=>Math.abs(x.deltaSys)),8);
+  const centerY=pt+iH/2;
+  const yf=v=>centerY-v/maxD*(iH/2);
+  const xf=i=>d.length>1?pl+i*iW/(d.length-1):pl+iW/2;
+  const bw=Math.max(iW/d.length*0.55,10);
+  let bars='',a=0;
+  for(let i=0;i<d.length;i++){
+    const x=xf(i),v=d[i].deltaSys;a+=v;
+    const col=v<0?'#e74c3c':(d[i].session==='morning'?'#27ae60':'#e67e22');
+    const h=Math.abs(v)/maxD*(iH/2);const ry=v>=0?yf(v):centerY;
+    bars+="<rect x='"+(x-bw/2).toFixed(0)+"' y='"+ry.toFixed(0)+"' width='"+bw.toFixed(0)+"' height='"+h.toFixed(0)+"' fill='"+col+"' rx='2' opacity='0.85'/>";
+    const ty=v>=0?(ry-7).toFixed(0):(ry+h+12).toFixed(0);
+    bars+="<text x='"+x.toFixed(0)+"' y='"+ty+"' font-size='8' fill='"+col+"' text-anchor='middle' font-weight='bold'>"+(v>0?'+':'')+v+"</text>";
+    const col2=d[i].session==='morning'?'#27ae60':'#e67e22';
+    bars+="<text transform='rotate(-45,"+x.toFixed(0)+","+(H-pb+14)+")' x='"+x.toFixed(0)+"' y='"+(H-pb+14)+"' font-size='7.5' fill='"+col2+"' text-anchor='end'>"+fds(d[i].date)+' '+(d[i].session==='morning'?'M':'T')+"</text>";
+  }
+  a=r1(a/d.length);
+  const avgY=yf(a);
+  const avgLine="<line x1='"+pl+"' x2='"+(W-pr)+"' y1='"+avgY.toFixed(0)+"' y2='"+avgY.toFixed(0)+"' stroke='#1a5276' stroke-width='1.2' stroke-dasharray='5,3' opacity='0.7'/><text x='"+(W-pr+2)+"' y='"+(avgY+4).toFixed(0)+"' font-size='8' fill='#1a5276'>media "+(a>0?'+':'')+a+"</text>";
+  const leg="<rect x='"+pl+"' y='12' width='8' height='8' fill='#27ae60' rx='1'/><text x='"+(pl+12)+"' y='19' font-size='8.5' fill='#27ae60'>Normal (ma&ntilde;ana)</text><rect x='"+(pl+135)+"' y='12' width='8' height='8' fill='#e67e22' rx='1'/><text x='"+(pl+147)+"' y='19' font-size='8.5' fill='#e67e22'>Normal (tarde)</text><rect x='"+(pl+255)+"' y='12' width='8' height='8' fill='#e74c3c' rx='1'/><text x='"+(pl+267)+"' y='19' font-size='8.5' fill='#e74c3c'>Patr&oacute;n invertido (1&ordf; &lt; media)</text>";
+  return "<svg viewBox='0 0 "+W+" "+H+"' xmlns='http://www.w3.org/2000/svg' style='width:100%;border:1px solid #e0e0e0;border-radius:6px;background:#fafcff'><line x1='"+pl+"' y1='"+centerY.toFixed(0)+"' x2='"+(W-pr)+"' y2='"+centerY.toFixed(0)+"' stroke='#555' stroke-width='1'/><line x1='"+pl+"' y1='"+pt+"' x2='"+pl+"' y2='"+(H-pb)+"' stroke='#bbb' stroke-width='1'/><text x='"+(pl-4)+"' y='"+(pt+4)+"' font-size='8' fill='#aaa' text-anchor='end'>+"+rnd(maxD)+"</text><text x='"+(pl-4)+"' y='"+(centerY+4).toFixed(0)+"' font-size='8' fill='#555' text-anchor='end'>0</text><text x='"+(pl-4)+"' y='"+(H-pb-2)+"' font-size='8' fill='#aaa' text-anchor='end'>-"+rnd(maxD)+"</text>"+bars+avgLine+leg+"</svg>";
+}
+function buildFCSVG(sorted) {
+  const fc=sorted.filter(m=>nn(m.hr));
+  if(fc.length<2) return '';
+  const W=920,H=170,pl=60,pr=20,pt=20,pb=48,iW=W-pl-pr,iH=H-pt-pb;
+  const vals=fc.map(m=>nn(m.hr));
+  const maxV=Math.max(...vals,100)+8,minV=Math.max(Math.min(...vals,60)-8,30);
+  const yf=v=>pt+iH-(v-minV)/(maxV-minV)*iH;
+  const xf=i=>fc.length>1?pl+i*iW/(fc.length-1):pl+iW/2;
+  const pts=fc.map((m,i)=>xf(i).toFixed(0)+','+yf(nn(m.hr)).toFixed(0)).join(' ');
+  let ci='',yl='';
+  for(let i=0;i<fc.length;i++){const m=fc[i];const x=xf(i),y=yf(nn(m.hr));const col=m.session==='morning'?'#27ae60':'#e67e22';ci+="<circle cx='"+x.toFixed(0)+"' cy='"+y.toFixed(0)+"' r='4' fill='"+col+"' stroke='#fff' stroke-width='1.5'/><text x='"+x.toFixed(0)+"' y='"+(y-7).toFixed(0)+"' font-size='8' fill='"+col+"' text-anchor='middle' font-weight='bold'>"+nn(m.hr)+"</text><text transform='rotate(-45,"+x.toFixed(0)+","+(H-pb+14)+")' x='"+x.toFixed(0)+"' y='"+(H-pb+14)+"' font-size='7.5' fill='"+col+"' text-anchor='end'>"+fds(m.date)+' '+(m.session==='morning'?'M':'T')+"</text>";}
+  for(const v of[40,50,60,70,80,90,100,110]){if(v>=minV&&v<=maxV)yl+="<line x1='"+pl+"' x2='"+(W-pr)+"' y1='"+yf(v).toFixed(0)+"' y2='"+yf(v).toFixed(0)+"' stroke='#eee' stroke-width='0.7'/><text x='"+(pl-4)+"' y='"+(yf(v)+3).toFixed(0)+"' font-size='8' fill='#aaa' text-anchor='end'>"+v+"</text>";}
+  const avgFC=rnd(vals.reduce((a,b)=>a+b,0)/vals.length);const avgY=yf(avgFC);
+  return "<svg viewBox='0 0 "+W+" "+H+"' xmlns='http://www.w3.org/2000/svg' style='width:100%;border:1px solid #e0e0e0;border-radius:6px;background:#fafcff'><line x1='"+pl+"' y1='"+(H-pb)+"' x2='"+(W-pr)+"' y2='"+(H-pb)+"' stroke='#bbb'/><line x1='"+pl+"' y1='"+pt+"' x2='"+pl+"' y2='"+(H-pb)+"' stroke='#bbb'/>"+yl+"<polyline points='"+pts+"' fill='none' stroke='#8e44ad' stroke-width='2' stroke-linejoin='round' stroke-dasharray='4,2'/>"+ci+"<line x1='"+pl+"' x2='"+(W-pr)+"' y1='"+avgY.toFixed(0)+"' y2='"+avgY.toFixed(0)+"' stroke='#8e44ad' stroke-width='1' stroke-dasharray='3,3' opacity='0.6'/><text x='"+(W-pr+2)+"' y='"+(avgY+4).toFixed(0)+"' font-size='8' fill='#8e44ad'>media "+avgFC+"</text><text x='"+(pl+4)+"' y='"+(pt+10)+"' font-size='8.5' fill='#8e44ad' font-weight='600'>FC (lpm)</text></svg>";
+}
+
+// ─── Filas de tabla del informe ──────────────────────────────────────
+function buildTableRows(meas,treatments) {
+  const sorted=[...meas].filter(m=>smean(m)).sort((a,b)=>a.date!==b.date?a.date.localeCompare(b.date):(a.session==='morning'?-1:1));
+  const tSorted=treatments?[...treatments].sort((a,b)=>a.date.localeCompare(b.date)):[];
+  const byDate={};for(const m of sorted){if(!byDate[m.date])byDate[m.date]=[];byDate[m.date].push(m);}
+  let rows='';
+  const dates=Object.keys(byDate).sort();
+  for(let di=0;di<dates.length;di++){
+    const date=dates[di];
+    const txForDate=tSorted.filter(t=>t.date===date);
+    for(const t of txForDate){const col=t.type==='cambio'?'#e67e22':'#8e44ad';const lbl=t.type==='cambio'?'CAMBIO DE TRATAMIENTO':'INICIO DE TRATAMIENTO';rows+="<tr><td colspan='7' style='background:"+col+"18;border-left:4px solid "+col+";padding:6px 10px;font-size:11px;font-weight:700;color:"+col+"'>&#9670; "+lbl+" ("+fdm(date)+"): "+t.description+"</td></tr>";}
+    const sessions=byDate[date].sort((a,b)=>a.session==='morning'?-1:1);
+    const dRS=sessions.length*4;let first=true;
+    for(let si=0;si<sessions.length;si++){
+      const m=sessions[si];const isMorn=m.session==='morning';const sc=isMorn?'#27ae60':'#e67e22';const rc=isMorn?'m-row':'t-row';const ana=sessionAna(m);const mn=ana?ana.mean:null;
+      let sep='';if(di>0&&first&&!txForDate.length)sep='border-top:2.5px solid #c8dff0';else if(si>0)sep='border-top:1px dashed '+sc+'50';
+      rows+="<tr class='"+rc+"'"+(sep?" style='"+sep+"'":" ")+">";
+      if(first){rows+="<td class='date-c' rowspan='"+dRS+"' style='border-right:1px solid #e8e8e8;vertical-align:middle'>"+fdm(date)+"</td>";first=false;}
+      const sLbl=isMorn?'&#9650; MA&#209;ANA':'&#9660; TARDE';
+      rows+="<td rowspan='4' style='color:"+sc+";font-weight:700;font-size:10px;text-align:center;vertical-align:middle'>"+sLbl+"</td>";
+      const ar1=ana&&ana.anomR1Dia?"<span class='paradox'>*</span>":'';
+      const ds=ana&&ana.deltaSys!==null?"<span style='font-size:9px;color:#8e44ad;margin-left:3px'>&Delta;"+(ana.deltaSys>0?'+':'')+ana.deltaSys+"</span>":'';
+      rows+="<td class='strikethrough'>"+(m.r1time||'&mdash;')+"</td><td class='strikethrough'>"+(m.r1sys||'&mdash;')+"</td><td class='strikethrough'>"+(m.r1dia||'&mdash;')+ar1+"</td><td class='strikethrough'>"+(m.hr||'&mdash;')+"</td><td class='strikethrough note-cell'>Descartada"+ds+"</td></tr>";
+      const r2se=nn(m.r2sys)>=135,r2de=nn(m.r2dia)>=85;
+      rows+="<tr class='"+rc+"'><td>"+(m.r2time||'&mdash;')+"</td><td"+(r2se?" class='exceeded'":'')+">"+( m.r2sys||'&mdash;')+"</td><td"+(r2de?" class='exceeded'":'')+">"+( m.r2dia||'&mdash;')+"</td><td>"+(m.hr||'&mdash;')+"</td><td>&#10003;</td></tr>";
+      const r3se=nn(m.r3sys)>=135,r3de=nn(m.r3dia)>=85;const aP=nn(m.r3sys)>nn(m.r2sys)+2,aD=nn(m.r3dia)>nn(m.r2dia)+2;const anPP=ana&&ana.anomPP;
+      let f3='&#10003;';if(aP&&aD)f3="&#10003; <span class='paradox'>&#8593;PAS+PAD</span>";else if(aP)f3="&#10003; <span class='paradox'>&#8593;PAS</span>";else if(aD)f3="&#10003; <span class='paradox'>&#8593;PAD</span>";if(anPP)f3+=" <span class='paradox'>&#8224;PP</span>";
+      rows+="<tr class='"+rc+"'><td>"+(m.r3time||'&mdash;')+"</td><td"+(r3se?" class='exceeded'":'')+">"+( m.r3sys||'&mdash;')+"</td><td"+(r3de?" class='exceeded'":'')+">"+( m.r3dia||'&mdash;')+"</td><td>"+(m.hr||'&mdash;')+"</td><td>"+f3+"</td></tr>";
+      const mse=mn&&mn.sys>=135,mde=mn&&mn.dia>=85,mE=mse||mde;const mc=mE?'mean-warn':'mean-cell';
+      rows+="<tr class='"+rc+"'><td class='"+mc+"' style='text-align:left;font-style:italic;font-size:10px'>Media "+(isMorn?'ma&ntilde;ana':'tarde')+":</td><td class='"+(mse?'mean-warn':'mean-cell')+"'>"+(mn?mn.sys:'&mdash;')+"</td><td class='"+(mde?'mean-warn':'mean-cell')+"'>"+(mn?mn.dia:'&mdash;')+"</td><td class='"+mc+"'>"+(m.hr||'&mdash;')+"</td><td class='"+mc+"'>&mdash;</td></tr>";
+    }
+  }
+  return rows;
+}
+
+// ─── CSS del informe PDF ─────────────────────────────────────────────
+const RCSS=[
+  "*{box-sizing:border-box;margin:0;padding:0}",
+  "body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;background:linear-gradient(135deg,#f9f7f3,#f0ebe3);print-color-adjust:exact;-webkit-print-color-adjust:exact}",
+  ".page{max-width:880px;margin:20px auto;background:#fff;padding:32px 36px;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.11)}",
+  ".header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1a5276;padding-bottom:14px;margin-bottom:20px}",
+  ".header h1{font-size:18px;color:#1a5276;font-weight:700}.header p{font-size:12px;color:#555;margin-top:2px}",
+  ".header-right{text-align:right;font-size:11px;color:#555}",
+  ".badge{background:#1a5276;color:#fff;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600;margin-bottom:4px;display:inline-block}",
+  ".section{margin-bottom:22px}",
+  ".section-title{font-size:13px;font-weight:700;color:#1a5276;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #d5e8f3;padding-bottom:4px;margin-bottom:10px}",
+  ".patient-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}",
+  ".patient-cell{background:#f0f6fb;border-radius:6px;padding:8px 12px}",
+  ".cell-label{font-size:10px;color:#777;text-transform:uppercase;font-weight:600}",
+  ".cell-value{font-size:13px;font-weight:600;color:#1a5276;margin-top:2px}",
+  ".summary-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px}",
+  ".card{border-radius:8px;padding:12px 10px;text-align:center}",
+  ".card-lbl{font-size:10px;text-transform:uppercase;font-weight:600;opacity:.85}.card-val{font-weight:700;margin:4px 0}.card-sub{font-size:10px;opacity:.75}",
+  ".c-global{background:#eaf4fb;color:#1a5276;border:2px solid #1a5276}",
+  ".c-morning{background:#eafaf1;color:#1e8449;border:2px solid #27ae60}.c-morning.warn-b{border-color:#e74c3c}",
+  ".c-evening{background:#fef5e7;color:#b7770d;border:2px solid #e67e22}",
+  ".c-warn{background:#fef9e7;color:#b7770d;border:2px solid #f39c12}",
+  ".semaforo{display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:8px;margin-bottom:12px}",
+  ".sem-dot{width:28px;height:28px;border-radius:50%;flex-shrink:0}",
+  ".stats-tbl{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:8px}",
+  ".stats-tbl th{background:#1a5276;color:#fff;padding:6px 8px;text-align:center;font-size:11px}",
+  ".stats-tbl td{padding:5px 8px;text-align:center;border-bottom:1px solid #eee}",
+  ".stats-tbl td:first-child{text-align:left;font-weight:600;color:#1a5276}",
+  ".main-table{width:100%;border-collapse:collapse;font-size:11.5px}",
+  ".main-table th{background:#1a5276;color:#fff;padding:7px 6px;text-align:center;font-weight:600;font-size:11px}",
+  ".main-table td{padding:5px 6px;text-align:center;border-bottom:1px solid #eaeaea;vertical-align:middle}",
+  ".m-row td:first-child{border-left:3px solid #27ae60}.t-row td:first-child{border-left:3px solid #e67e22}",
+  ".strikethrough{text-decoration:line-through;color:#aaa;font-style:italic}.note-cell{font-size:10px;color:#999;font-style:italic}",
+  ".mean-cell{font-weight:700;background:#eaf4fb!important;color:#1a5276}",
+  ".mean-warn{font-weight:700;background:#fdecea!important;color:#922b21}",
+  ".date-c{font-weight:700;color:#1a5276;font-size:11.5px}.exceeded{color:#c0392b;font-weight:700}.paradox{color:#8e44ad;font-size:10px}",
+  ".obs-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}",
+  ".obs-card{border-radius:6px;padding:10px 12px;break-inside:avoid}",
+  ".obs-card.ok{border-left:4px solid #27ae60;background:#f0faf4}",
+  ".obs-card.warn{border-left:4px solid #e67e22;background:#fef8f0}",
+  ".obs-card.alert{border-left:4px solid #e74c3c;background:#fdedec}",
+  ".obs-card.info{border-left:4px solid #1a5276;background:#f0f6fb}",
+  ".obs-card.note{border-left:4px solid #8e44ad;background:#f8f0fb}",
+  ".obs-title{font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:4px}",
+  ".obs-title.ok{color:#1e8449}.obs-title.warn{color:#b7770d}.obs-title.alert{color:#922b21}.obs-title.info{color:#1a5276}.obs-title.note{color:#6c3483}",
+  ".obs-text{font-size:11.5px;color:#444;line-height:1.55}",
+  ".tx-timeline{margin:8px 0}.tx-item{display:flex;align-items:flex-start;gap:10px;margin-bottom:7px;font-size:12px}",
+  ".tx-badge{padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;white-space:nowrap}",
+  ".tx-inicio{background:#f5eef8;color:#8e44ad;border:1px solid #8e44ad}",
+  ".tx-cambio{background:#fef5e7;color:#b7770d;border:1px solid #e67e22}",
+  "table.meth{width:100%;font-size:11.5px;border-collapse:collapse}",
+  "table.meth td{padding:4px 8px;border-bottom:1px solid #eee;vertical-align:top}",
+  "table.meth td:first-child{font-weight:600;color:#1a5276;width:36%}",
+  ".disclaimer{background:#fef9e7;border:1px solid #f39c12;border-radius:6px;padding:12px 14px;font-size:11.5px;color:#7d6608;margin-top:8px}",
+  ".footer{margin-top:22px;border-top:2px solid #1a5276;padding-top:12px;display:flex;justify-content:space-between;align-items:flex-end;font-size:11px;color:#555}",
+  ".pharmacy-name{font-size:14px;font-weight:700;color:#1a5276}",
+  ".sig-line{border-top:1px solid #aaa;width:180px;margin-top:30px;margin-left:auto;padding-top:4px;text-align:center;font-size:10px}",
+  "@media print{body{background:#fff}.page{box-shadow:none;margin:0;padding:20px;max-width:100%;border-radius:0}.obs-grid{grid-template-columns:1fr 1fr}}"
+].join('');
+
+// ─── Constructor del informe HTML completo ───────────────────────────
+function buildReport(meas,info,st,status,obs,treatments) {
+  const sorted=[...meas].filter(m=>smean(m)).sort((a,b)=>a.date!==b.date?a.date.localeCompare(b.date):(a.session==='morning'?-1:1));
+  const dates=sorted.map(m=>m.date);
+  const period=dates.length>0?(fdl(dates[0])+'&ndash;'+fdl(dates[dates.length-1])):'---';
+  const hasMG=!!(st&&st.mornG),hasAG=!!(st&&st.aftG);
+  const tSorted=treatments?[...treatments].sort((a,b)=>a.date.localeCompare(b.date)):[];
+  const semStyle='background:'+status.semColor+';box-shadow:0 0 10px '+status.semColor+'60';
+  const semHtml="<div class='semaforo' style='background:"+status.semColor+"15;border:2px solid "+status.semColor+"30'><div class='sem-dot' style='"+semStyle+"'></div><div><div style='font-weight:800;font-size:14px;color:"+status.color+"'>"+status.text+"</div><div style='font-size:11px;color:#888;margin-top:3px'>Media AMPA: "+(st?(st.global.sys+"/"+st.global.dia+" mmHg"):"---")+" &nbsp;|&nbsp; Umbral diagn&oacute;stico: 135/85 mmHg &nbsp;|&nbsp; Objetivo &oacute;ptimo: &lt;130/80 mmHg</div></div></div>";
+  const cards=[
+    {lbl:"Media Global AMPA",val:st?(st.global.sys+"/"+st.global.dia):"---",sub:"mmHg &nbsp;|&nbsp; umbral &lt;135/85",cls:"c-global",sz:"22px"},
+    {lbl:"Media Ma&ntilde;ana",val:hasMG?(st.mornG.sys+"/"+st.mornG.dia):"Sin datos",sub:hasMG?("mmHg &middot; "+st.mornCount+" ses."+(st.mornEl?" !":"")):"-",cls:hasMG&&st.mornEl?"c-morning warn-b":"c-morning",sz:"22px"},
+    {lbl:"Media Tarde",val:hasAG?(st.aftG.sys+"/"+st.aftG.dia):"Sin datos",sub:hasAG?("mmHg &middot; "+st.aftCount+" ses."+(st.aftEl?" !":"")):"-",cls:"c-evening",sz:"22px"},
+    {lbl:"Control AMPA",val:status.badge,sub:st?(st.validDays+" d&iacute;as &middot; "+st.totalSessions+" ses."):"-",cls:"c-warn",sz:"14px"}
+  ];
+  let cardHtml='';for(const c of cards)cardHtml+="<div class='card "+c.cls+"'><div class='card-lbl'>"+c.lbl+"</div><div class='card-val' style='font-size:"+c.sz+"'>"+c.val+"</div><div class='card-sub'>"+c.sub+"</div></div>";
+  let statsHtml='';
+  if(st){
+    const rows2=[
+      ["Global",st.global.sys,st.global.dia,st.pasSd,st.padSd,st.pasMin&&st.pasMax?(st.pasMin+"&ndash;"+st.pasMax):"&mdash;",st.padMin&&st.padMax?(st.padMin+"&ndash;"+st.padMax):"&mdash;",st.totalSessions],
+      ...(st.mornG?[["Ma&ntilde;ana",st.mornG.sys,st.mornG.dia,st.mornPasSd,st.mornPadSd,st.mornPasMin&&st.mornPasMax?(st.mornPasMin+"&ndash;"+st.mornPasMax):"&mdash;","&mdash;",st.mornCount]]:[]),
+      ...(st.aftG?[["Tarde",st.aftG.sys,st.aftG.dia,st.aftPasSd,st.aftPadSd,st.aftPasMin&&st.aftPasMax?(st.aftPasMin+"&ndash;"+st.aftPasMax):"&mdash;","&mdash;",st.aftCount]]:[]),
+    ];
+    statsHtml="<table class='stats-tbl'><thead><tr><th style='text-align:left'>Per&iacute;odo</th><th>PAS media</th><th>PAD media</th><th>PAS DE</th><th>PAD DE</th><th>Rango PAS</th><th>Rango PAD</th><th>Sesiones</th></tr></thead><tbody>";
+    for(const r of rows2){statsHtml+="<tr><td>"+r[0]+"</td>"+r.slice(1).map(v=>"<td>"+v+"</td>").join("")+"</tr>";}
+    statsHtml+="</tbody></table>";
+  }
+  let alertaNote='';
+  if(st&&st.avgAlert>0)alertaNote="<p style='font-size:11px;color:#777;margin-top:4px'>Efecto de alerta medio: +"+(st.avgAlert)+" mmHg sist&oacute;lica (1&ordf; vs. media 2&ordf;+3&ordf;).</p>";
+  let gradLine='';
+  if(hasMG&&hasAG){const gP=rnd(Math.abs(st.mornG.sys-st.aftG.sys)),gD=rnd(Math.abs(st.mornG.dia-st.aftG.dia));gradLine="<p style='font-size:11px;color:#777;margin-top:3px'>Gradiente ma&ntilde;ana&ndash;tarde: PAS "+gP+" mmHg &nbsp;|&nbsp; PAD "+gD+" mmHg.</p>";}
+  let hrLine='';
+  if(st&&st.avgHR){let t=st.avgHR+' lpm';if(st.mornHR&&st.aftHR)t+=' (ma&ntilde;ana: '+st.mornHR+', tarde: '+st.aftHR+')';hrLine="<p style='font-size:11px;color:#777;margin-top:3px'>FC media: "+t+".</p>";}
+  let txHtml='';for(const t of tSorted){const cls=t.type==='cambio'?'tx-cambio':'tx-inicio';const lbl=t.type==='cambio'?'Cambio':'Inicio';txHtml+="<div class='tx-item'><span class='tx-badge "+cls+"'>"+lbl+"</span><span><strong>"+fdm(t.date)+"</strong> &mdash; "+t.description+"</span></div>";}
+  let obsHtml='';for(const o of obs){const t=o.tipo||'info';obsHtml+="<div class='obs-card "+t+"'><div class='obs-title "+t+"'>"+(o.titulo||'---')+"</div><div class='obs-text'>"+(o.texto||'')+"</div></div>";}
+  const methData=[
+    ["Protocolo","ESH 2023 / ESC 2024 / SEH-LELHA 2022 &mdash; 3 mediciones/sesi&oacute;n, descarte 1&ordf;, promedio 2&ordf;+3&ordf;"],
+    ["Dispositivo",info.device||"No especificado"],
+    ["Umbral diagn&oacute;stico AMPA","PAS &ge;135 mmHg y/o PAD &ge;85 mmHg"],
+    ["Objetivo &oacute;ptimo ESC 2024","PA domiciliaria &lt;130/80 mmHg"],
+    ["Sesiones v&aacute;lidas",st?(st.totalSessions+" ("+st.mornCount+" ma&ntilde;ana + "+st.aftCount+" tarde)"):"---"],
+    ["Per&iacute;odo",period],
+    ...(st&&st.avgAlert!==undefined?[["Efecto de alerta medio",(st.avgAlert>0?"+":"")+st.avgAlert+" mmHg sist&oacute;lica"]]:[]),
+    ...(hasMG&&hasAG?[["Gradiente ma&ntilde;ana&ndash;tarde","PAS "+rnd(Math.abs(st.mornG.sys-st.aftG.sys))+" mmHg &nbsp;|&nbsp; PAD "+rnd(Math.abs(st.mornG.dia-st.aftG.dia))+" mmHg"]]:[]),
+    ...(st&&st.avgHR?[["FC media",st.avgHR+" lpm"+(st.mornHR?" (ma&ntilde;ana: "+st.mornHR+", tarde: "+(st.aftHR||"---")+")":" ")]]:[]),
+    ...(info.clinicSys?[["PA en consulta",info.clinicSys+"/"+info.clinicDia+" mmHg"]]:[]),
+  ];
+  let methHtml='';for(const r of methData)methHtml+="<tr><td>"+r[0]+"</td><td>"+r[1]+"</td></tr>";
+  const barSection=hasMG&&hasAG?"<div style='margin-top:16px'><div style='font-size:11px;font-weight:600;color:#444;margin-bottom:6px;text-align:center'>Comparativa Ma&ntilde;ana vs. Tarde</div><div style='display:flex;justify-content:center'>"+buildBarSVG(st)+"</div></div>":"";
+  const alertaSection=st&&st.alertaDeltas.length>=2?"<div class='section'><div class='section-title'>Efecto de Alerta</div><div style='margin:6px 0'>"+buildAlertaSVG(st.alertaDeltas)+"</div>"+alertaNote+"</div>":"";
+  const fcSection=sorted.filter(m=>nn(m.hr)).length>=2?"<div style='margin-top:14px'>"+buildFCSVG(sorted)+"</div>":"";
+  const p=[];
+  p.push("<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'><title>Informe AMPA &ndash; Farmacia Espejo</title><style>"+RCSS+"</style></head><body><div class='page'>");
+  p.push("<div class='header'><div><h1>Farmacia Espejo &mdash; Tel. 950 401 678</h1><p>Servicio de Atenci&oacute;n Farmac&eacute;utica &bull; Adra (Almer&iacute;a)</p><p style='margin-top:7px;font-weight:700;font-size:15px;color:#1a5276'>INFORME DE AUTOMEDIDA DE PRESI&Oacute;N ARTERIAL (AMPA)</p></div><div class='header-right'><div class='badge'>AMPA</div><br><span>Fecha de emisi&oacute;n:<br><strong>"+todayS()+"</strong></span></div></div>");
+  p.push("<div class='section'><div class='section-title'>Datos del Registro</div><div class='patient-grid'><div class='patient-cell'><div class='cell-label'>Paciente</div><div class='cell-value'>"+(info.name||'______________________')+"</div></div><div class='patient-cell'><div class='cell-label'>Per&iacute;odo</div><div class='cell-value'>"+period+"</div></div><div class='patient-cell'><div class='cell-label'>D&iacute;as con medici&oacute;n</div><div class='cell-value'>"+(st?st.validDays:'---')+" d&iacute;as</div></div><div class='patient-cell'><div class='cell-label'>Dispositivo</div><div class='cell-value'>"+(info.device||'No especificado')+"</div></div><div class='patient-cell'><div class='cell-label'>Sesiones v&aacute;lidas</div><div class='cell-value'>"+(st?st.totalSessions+' sesiones':'---')+"</div></div><div class='patient-cell'><div class='cell-label'>Cambios de tratamiento</div><div class='cell-value'>"+(tSorted.length>0?tSorted.filter(t=>t.type==='cambio').length+' cambio(s)':'Ninguno registrado')+"</div></div></div>"+(info.clinicSys?"<p style='font-size:11px;color:#777;margin-top:7px'><strong>PA en consulta:</strong> "+info.clinicSys+"/"+info.clinicDia+" mmHg.</p>":"")+"</div>");
+  if(tSorted.length>0)p.push("<div class='section'><div class='section-title'>Evoluci&oacute;n del Tratamiento</div><div class='tx-timeline'>"+txHtml+"</div></div>");
+  p.push("<div class='section'><div class='section-title'>Resultados Principales</div>"+semHtml+"<div class='summary-cards'>"+cardHtml+"</div>");
+  if(statsHtml)p.push("<div style='margin-top:10px'><div style='font-size:12px;font-weight:700;color:#1a5276;margin-bottom:6px'>Resumen estad&iacute;stico</div>"+statsHtml+"</div>");
+  p.push(gradLine+hrLine+"</div>");
+  p.push("<div class='section'><div class='section-title'>Registro Detallado de Mediciones</div><table class='main-table'><thead><tr><th>Fecha</th><th>Sesi&oacute;n</th><th>Hora</th><th>PAS (mmHg)</th><th>PAD (mmHg)</th><th>FC (lpm)</th><th>Uso en media</th></tr></thead><tbody>"+buildTableRows(meas,tSorted)+"</tbody></table><p style='font-size:10px;color:#888;margin-top:6px'>1&ordf; lectura descartada (ESH 2023). Se promedian 2&ordf; y 3&ordf;. &Delta; = diferencia 1&ordf; vs. media.</p></div>");
+  p.push("<div class='section'><div class='section-title'>Evoluci&oacute;n Temporal</div><div style='margin:6px 0'>"+buildEvolSVG(sorted,tSorted)+"</div>"+barSection+fcSection+"</div>");
+  p.push(alertaSection);
+  p.push("<div class='section'><div class='section-title'>Observaciones Cl&iacute;nicas</div>"+(obs.length?"<div class='obs-grid'>"+obsHtml+"</div>":"<p style='color:#999;font-style:italic;font-size:12px'>Sin observaciones generadas.</p>")+"</div>");
+  p.push("<div class='section'><div class='section-title'>Metodolog&iacute;a</div><table class='meth'>"+methHtml+"</table></div>");
+  p.push("<div class='section'><div class='section-title'>Referencias</div><div style='font-size:10.5px;color:#444;line-height:2'>(1) McEvoy JW et al. 2024 ESC Guidelines for the management of elevated blood pressure and hypertension. <em>Eur Heart J.</em> 2024;45(38):3912&ndash;4018. doi:10.1093/eurheartj/ehae178<br>(2) Mancia G et al. 2023 ESH Guidelines for the management of arterial hypertension. <em>J Hypertens.</em> 2023;41(12):1874&ndash;2071. doi:10.1097/HJH.0000000000003480<br>(3) Stergiou GS et al. 2021 ESH Practice Guidelines for office and out-of-office blood pressure measurement. <em>J Hypertens.</em> 2021;39(7):1293&ndash;1302. doi:10.1097/HJH.0000000000002843</div></div>");
+  p.push("<div class='disclaimer'>&#9888; <strong>AVISO:</strong> Este informe tiene car&aacute;cter informativo y recoge &uacute;nicamente los datos de automedida de presi&oacute;n arterial registrados por el paciente. Los resultados deben ser valorados e interpretados por su m&eacute;dico, quien determinar&aacute; las decisiones cl&iacute;nicas oportunas.</div>");
+  p.push("<div class='footer'><div><div class='pharmacy-name'>Farmacia Espejo &mdash; Tel. 950 401 678</div><div>Servicio de Atenci&oacute;n Farmac&eacute;utica &bull; Dr. Jos&eacute; Espejo Guerrero &middot; Colegiado n.&ordm; 507</div><div>Adra (Almer&iacute;a)</div></div><div><div class='sig-line'>Farmac&eacute;utico/a responsable<br>Fecha de emisi&oacute;n: "+todayS()+"</div></div></div>");
+  p.push("</div></body></html>");
+  return p.join('');
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  ESTADO DE LA APLICACIÓN
+// ════════════════════════════════════════════════════════════════════
+const ST = {
+  tab: 0,
+  imgData: null, imgType: 'image/jpeg',
+  extracting: false, extractErr: '',
+  meas: [],
+  treatments: [],
+  info: {name:'', device:'', clinicSys:'', clinicDia:''},
+  obs: [],
+  loadObs: false,
+  dragging: false,
+  excelRows: 0, excelProcessing: false,
+};
+
+// ─── Helper API ──────────────────────────────────────────────────────
+async function callAPI(messages, maxTokens=2000) {
+  const hasKey = !!CFG.apiKey;
+  const isWorker = CFG.endpoint !== 'https://api.anthropic.com/v1/messages';
+  if(!hasKey && !isWorker) {
+    throw new Error('Sin API configurada. Introduce tu API key o configura el Worker en la sección de ajustes.');
+  }
+  const headers = {'Content-Type':'application/json'};
+  if(hasKey) {
+    headers['x-api-key'] = CFG.apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+    headers['anthropic-dangerous-direct-browser-access'] = 'true';
+  }
+  const res = await fetch(CFG.endpoint, {
+    method:'POST', headers,
+    body:JSON.stringify({model:CFG.model, max_tokens:maxTokens, messages})
+  });
+  if(!res.ok) throw new Error(`Error API: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  GESTIÓN DE FOCO — evita perder el cursor al re-renderizar
+// ════════════════════════════════════════════════════════════════════
+let _focId=null, _focSel=null;
+function saveFoc(){const e=document.activeElement;if(e&&e.id){_focId=e.id;_focSel=e.selectionStart;}else _focId=null;}
+function restoreFoc(){if(_focId){const e=document.getElementById(_focId);if(e){e.focus();try{if(_focSel!==null)e.setSelectionRange(_focSel,_focSel);}catch(x){}}}}
+
+// ════════════════════════════════════════════════════════════════════
+//  BUILDERS HTML — cada Tab genera su HTML completo
+// ════════════════════════════════════════════════════════════════════
+
+function buildSemaforoHTML(status) {
+  return `<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:${status.semColor}15;border:2px solid ${status.semColor}35;border-radius:10px;margin-bottom:14px">
+    <div style="width:26px;height:26px;border-radius:50%;background:${status.semColor};flex-shrink:0;box-shadow:0 0 10px ${status.semColor}80"></div>
+    <div>
+      <div style="font-weight:800;color:${status.color};font-size:15px">${status.text}</div>
+      <div style="font-size:11px;color:#777;margin-top:3px">Media AMPA · Umbral diagnóstico: 135/85 mmHg · Objetivo óptimo: &lt;130/80 mmHg</div>
+    </div>
+  </div>`;
+}
+
+function buildTab0() {
+  // Zona de archivo
+  let zoneContent='';
+  if(_imgUrl) {
+    zoneContent=`<img src="${_imgUrl}" alt="" style="max-width:100%;max-height:180px;border-radius:8px;object-fit:contain">`;
+  } else if(_fileRef && _fileRef.name) {
+    zoneContent=`<div style="padding:16px 0"><div style="font-size:40px;margin-bottom:8px">📊</div><div style="font-weight:700;color:#1a5276;font-size:14px">${esc(_fileRef.name)}</div><div style="color:#27ae60;font-size:12px;margin-top:6px">✓ ${ST.excelRows} filas detectadas · Listo para extraer</div><div style="color:#aaa;font-size:11px;margin-top:4px">Pulsa para cambiar el archivo</div></div>`;
+  } else {
+    zoneContent=`<div><div style="display:flex;justify-content:center;gap:16px;margin-bottom:10px;font-size:28px">📄 📊</div><div style="font-weight:700;color:#555">Arrastra aquí o pulsa para seleccionar</div><div style="color:#aaa;font-size:12px;margin-top:4px">Foto del registro manuscrito · Excel de mediciones (.xlsx / .xls)</div></div>`;
+  }
+  const isImg = !!ST.imgData && !(_fileRef&&_fileRef.name&&_fileRef.name.match(/\.(xlsx|xls)$/i));
+  const isExcel = !!(_fileRef&&_fileRef.name&&_fileRef.name.match(/\.(xlsx|xls)$/i));
+  const apiAvail = !!(CFG.apiKey || CFG.endpoint !== 'https://api.anthropic.com/v1/messages');
+
+  let btns='';
+  if(isImg) btns+=`<button class="btn" style="background:${ST.extracting?'#bbb':'#1a5276'};color:#fff" ${ST.extracting?'disabled':''} onclick="doExtractPhoto()">${ST.extracting?'⏳ Extrayendo foto...':'📷 Extraer foto → Mediciones'}</button>`;
+  if(isExcel) btns+=`<button class="btn" style="background:${ST.excelProcessing?'#bbb':'#1e8449'};color:#fff" ${ST.excelProcessing?'disabled':''} onclick="doExtractExcel()">${ST.excelProcessing?'⏳ Procesando Excel...':'📊 Extraer Excel con IA → Mediciones'}</button>`;
+  btns+=`<button class="btn" style="background:#6c757d;color:#fff" onclick="doAddManual()">✏️ Introducir manualmente</button>`;
+  btns+=`<button class="btn" style="background:transparent;color:#1a5276;border:1.5px solid rgba(26,82,118,.8)" onclick="doDownloadTemplate()">📥 Plantilla Excel</button>`;
+
+  // API config inline
+  const apiNote = apiAvail
+    ? `<div style="background:#eafaf1;border:1px solid #27ae60;border-radius:6px;padding:8px 12px;font-size:11px;color:#1e8449;margin-top:10px">✅ API configurada · Funciones IA activas</div>`
+    : `<div style="background:#fef9e7;border:1px solid #f39c12;border-radius:6px;padding:8px 12px;font-size:11px;color:#7d6608;margin-top:10px">⚠️ Sin API configurada · Extracción de foto, Excel con IA y observaciones clínicas no disponibles · <a href="#" onclick="document.getElementById('api-config').style.display='block';return false" style="color:#1a5276;font-weight:700">Configurar →</a></div>`;
+
+  return `<div>
+    <div class="card">
+      <div style="font-weight:800;color:#1a5276;margin-bottom:12px;font-size:14px">📎 Foto o Excel del registro</div>
+      <div class="drop-zone${ST.dragging?' drag-over':''}"
+        onclick="document.getElementById('fileInput').click()"
+        ondragover="event.preventDefault();ST.dragging=true;this.classList.add('drag-over')"
+        ondragleave="ST.dragging=false;this.classList.remove('drag-over')"
+        ondrop="event.preventDefault();this.classList.remove('drag-over');handleFileChange(event.dataTransfer.files[0])">
+        ${zoneContent}
+      </div>
+      ${ST.extractErr?`<div style="color:#e74c3c;font-size:12px;margin-top:10px;padding:8px 12px;background:#ffeaea;border-radius:6px">${ST.extractErr}</div>`:''}
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">${btns}</div>
+      ${apiNote}
+    </div>
+
+    <!-- Configuración API (oculta por defecto) -->
+    <div id="api-config" class="card" style="display:none;border:2px solid #1a5276">
+      <div style="font-weight:800;color:#1a5276;margin-bottom:12px;font-size:14px">⚙️ Configuración API</div>
+      <div style="font-size:12px;color:#555;margin-bottom:10px">Introduce tu API key de <a href="https://console.anthropic.com" target="_blank" style="color:#1a5276">console.anthropic.com</a> para activar las funciones IA. Coste: ~0,01-0,03 € por informe.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="apiKeyInput" class="inp" style="flex:1;min-width:220px;font-family:monospace" placeholder="sk-ant-api03-..." value="${esc(CFG.apiKey)}" oninput="CFG.apiKey=this.value">
+        <input id="workerInput" class="inp" style="flex:1;min-width:220px;font-family:monospace;font-size:11px" placeholder="https://mi-worker.workers.dev (opcional)" value="${CFG.endpoint!=='https://api.anthropic.com/v1/messages'?esc(CFG.endpoint):''}" oninput="if(this.value)CFG.endpoint=this.value;else CFG.endpoint='https://api.anthropic.com/v1/messages'">
+        <button class="btn" style="background:#1a5276;color:#fff" onclick="render()">Guardar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:800;color:#1a5276;margin-bottom:14px;font-size:14px">Datos del paciente</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+        <div><label class="lbl">Nombre / Referencia</label><input id="info-name" class="inp" style="width:100%" value="${esc(ST.info.name)}" placeholder="Dejar en blanco (protección de datos)" oninput="ST.info.name=this.value"></div>
+        <div><label class="lbl">Tensiómetro</label><input id="info-device" class="inp" style="width:100%" value="${esc(ST.info.device)}" placeholder="Ej: Omron M3" oninput="ST.info.device=this.value"></div>
+        <div><label class="lbl">PA en consulta (mmHg)</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="info-csys" class="inp" style="width:68px" value="${esc(ST.info.clinicSys)}" placeholder="Sist." oninput="ST.info.clinicSys=this.value">
+            <span style="color:#aaa;font-weight:700">/</span>
+            <input id="info-cdia" class="inp" style="width:68px" value="${esc(ST.info.clinicDia)}" placeholder="Diast." oninput="ST.info.clinicDia=this.value">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    ${buildTreatmentsCard()}
+
+    <div style="text-align:right">
+      <button class="btn" style="background:#1a5276;color:#fff;padding:11px 28px" onclick="setTab(1)">Ir a Mediciones →</button>
+    </div>
+  </div>`;
+}
+
+function buildTreatmentsCard() {
+  const tSorted=[...ST.treatments].sort((a,b)=>a.date.localeCompare(b.date));
+  let txRows='';
+  for(const t of tSorted){
+    const col=t.type==='cambio'?'#b7770d':'#8e44ad';
+    const bc=t.type==='cambio'?'#fef5e7':'#f5eef8';
+    const bord=t.type==='cambio'?'#e67e22':'#8e44ad';
+    txRows+=`<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
+      <span class="tx-badge" style="background:${bc};color:${col};border:1px solid ${bord}" onclick="toggleTxType('${t.id}')">${t.type==='cambio'?'🔄 Cambio':'🟣 Inicio'}</span>
+      <input type="date" value="${t.date}" style="padding:5px 4px;border:1px solid #ccc;border-radius:5px;font-size:12px" oninput="updTx('${t.id}','date',this.value)">
+      <input value="${esc(t.description)}" class="inp" style="flex:1;min-width:180px" placeholder="Ej: Enalapril 10 mg/24h" oninput="updTx('${t.id}','description',this.value)">
+      <button class="btn" style="background:#fdecea;color:#c0392b;padding:5px 10px;font-size:12px" onclick="delTx('${t.id}')">✕</button>
+    </div>`;
+  }
+  return `<div class="card">
+    <div style="font-weight:800;color:#1a5276;margin-bottom:14px;font-size:14px">💊 Tratamiento farmacológico <span style="font-weight:400;font-size:12px;color:#888">${ST.treatments.length>0?ST.treatments.length+' entrada(s)':''}</span></div>
+    ${txRows}
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <button class="btn" style="background:#8e44ad;color:#fff;padding:7px 16px" onclick="addTx('inicial')">+ Inicio de tratamiento</button>
+      <button class="btn" style="background:#e67e22;color:#fff;padding:7px 16px" onclick="addTx('cambio')">+ Cambio de tratamiento</button>
+    </div>
+  </div>`;
+}
+
+function buildTab1() {
+  const st=calcStats(ST.meas);
+  const status=getStatus(st,ST.info.clinicSys,ST.info.clinicDia);
+  const tSorted=[...ST.treatments].sort((a,b)=>a.date.localeCompare(b.date));
+
+  let statsBar='';
+  if(st) {
+    const chips=[
+      {l:'Global AMPA',v:st.global.sys+'/'+st.global.dia,c:st.globalEl?'#c0392b':'#1a5276'},
+      ...(st.mornG?[{l:'Mañana',v:st.mornG.sys+'/'+st.mornG.dia,c:st.mornEl?'#c0392b':'#27ae60'}]:[]),
+      ...(st.aftG?[{l:'Tarde',v:st.aftG.sys+'/'+st.aftG.dia,c:st.aftEl?'#c0392b':'#e67e22'}]:[]),
+      {l:'Días válidos',v:st.validDays+'d / '+st.totalSessions+'ses.',c:'#8e44ad'},
+    ];
+    statsBar=`<div id="stats-overlay" class="card" style="padding:10px 14px;margin-bottom:12px">
+      ${buildSemaforoHTML(status)}
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        ${chips.map(c=>`<div style="display:flex;gap:6px;align-items:center;padding:4px 10px;background:${c.c}12;border:1.5px solid ${c.c}30;border-radius:7px"><span style="font-size:10px;color:#888;font-weight:700;text-transform:uppercase;white-space:nowrap">${c.l}</span><span style="font-size:13px;font-weight:800;color:${c.c};white-space:nowrap">${c.v}</span></div>`).join('')}
+      </div>
+    </div>`;
+  } else {
+    statsBar=`<div id="stats-overlay"></div>`;
+  }
+
+  let txBar='';
+  if(tSorted.length>0){
+    txBar=`<div style="background:#faf5ff;border:1px solid #d8b4fe;border-radius:10px;padding:10px 14px;margin-bottom:12px">
+      <div style="font-weight:700;color:#7c3aed;font-size:12px;margin-bottom:6px">💊 Tratamiento</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        ${tSorted.map((t,i)=>`${i>0?"<span style='color:#aaa;font-size:14px'>→</span>":''}<span style="background:${t.type==='cambio'?'#fef5e7':'#f5eef8'};color:${t.type==='cambio'?'#b7770d':'#8e44ad'};border:1px solid ${t.type==='cambio'?'#e67e22':'#8e44ad'};border-radius:5px;padding:3px 8px;font-size:11px;font-weight:700">${t.type==='cambio'?'🔄':'🟣'} ${fds(t.date)}: ${esc(t.description)}</span>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  let measCards='';
+  for(const m of ST.meas){
+    const mn=smean(m);
+    const isMorn=m.session==='morning';
+    const sc=isMorn?'#27ae60':'#e67e22';
+    const ana=sessionAna(m);
+    const mnEl=mn&&(mn.sys>=135||mn.dia>=85);
+    const txOnDate=tSorted.filter(t=>t.date===m.date);
+
+    let txBadges='';
+    for(const t of txOnDate){
+      const col=t.type==='cambio'?'#b7770d':'#8e44ad';const bord=t.type==='cambio'?'#e67e22':'#8e44ad';
+      txBadges+=`<div style="background:${t.type==='cambio'?'#fef5e7':'#f5eef8'};border:1px solid ${bord};border-radius:8px;padding:6px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px;font-size:12px"><span style="font-weight:700;color:${col}">${t.type==='cambio'?'🔄 Cambio':'🟣 Inicio'}</span><span style="color:#555">${esc(t.description)}</span></div>`;
+    }
+
+    const r2se=nn(m.r2sys)>=135,r2de=nn(m.r2dia)>=85;
+    const r3se=nn(m.r3sys)>=135,r3de=nn(m.r3dia)>=85;
+    let f3='OK';
+    if(nn(m.r3sys)>nn(m.r2sys)+2&&nn(m.r3dia)>nn(m.r2dia)+2)f3='OK ↑PAS+PAD';
+    else if(nn(m.r3sys)>nn(m.r2sys)+2)f3='OK ↑PAS';
+    else if(nn(m.r3dia)>nn(m.r2dia)+2)f3='OK ↑PAD';
+    if(ana&&ana.anomPP)f3+=' †PP';
+
+    measCards+=`
+    ${txBadges}
+    <div class="card" style="border-left:4px solid ${sc};margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="date" value="${m.date}" style="padding:5px 4px;border:1px solid #ccc;border-radius:5px;font-size:12px;width:130px" onchange="onMeasChg('${m.id}','date',this.value)">
+          <select style="padding:5px 4px;border:1px solid #ccc;border-radius:5px;font-size:12px;color:${sc};font-weight:700;width:110px" onchange="onMeasChg('${m.id}','session',this.value)">
+            <option value="morning" ${m.session==='morning'?'selected':''}>☀ Mañana</option>
+            <option value="afternoon" ${m.session==='afternoon'?'selected':''}>🌙 Tarde</option>
+          </select>
+          <div style="display:flex;align-items:center;gap:4px"><span style="font-size:11px;color:#999">FC:</span><input class="ni" value="${m.hr||''}" placeholder="lpm" oninput="onMeasInp('${m.id}','hr',this.value)"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          ${mn?`<div style="background:${mnEl?'#fdecea':'#eafaf1'};border:1.5px solid ${mnEl?'#e74c3c':'#27ae60'};padding:4px 12px;border-radius:6px;font-weight:800;font-size:15px;color:${mnEl?'#c0392b':'#1e8449'}">${mn.sys}/${mn.dia} <span style="font-size:10px;font-weight:400">mmHg</span></div>`:''}
+          ${ana&&ana.deltaSys!==null?`<div style="background:#f5eef8;border:1px solid #8e44ad40;border-radius:6px;padding:4px 8px;font-size:11px;color:#8e44ad;font-weight:700">Δ${ana.deltaSys>0?'+':''}${ana.deltaSys}</div>`:''}
+          <button class="btn" style="background:#fdecea;color:#c0392b;padding:5px 10px;font-size:12px" onclick="delMeas('${m.id}')">✕</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:36px 90px 60px 60px 70px;gap:4px 8px;align-items:center">
+        <div style="font-weight:700;color:#aaa;font-size:10px;text-transform:uppercase"></div>
+        <div style="font-weight:700;color:#aaa;font-size:10px;text-transform:uppercase">Hora</div>
+        <div style="font-weight:700;color:#aaa;font-size:10px;text-transform:uppercase;text-align:center">SYS</div>
+        <div style="font-weight:700;color:#aaa;font-size:10px;text-transform:uppercase;text-align:center">DIA</div>
+        <div style="font-weight:700;color:#aaa;font-size:10px;text-transform:uppercase">Estado</div>
+
+        <div style="font-weight:700;color:#ccc;font-size:11px">1ª</div>
+        <input class="ti" value="${m.r1time||''}" type="time" style="opacity:.5" oninput="onMeasInp('${m.id}','r1time',this.value)">
+        <input class="ni" value="${m.r1sys||''}" placeholder="SYS" style="opacity:.5" oninput="onMeasInp('${m.id}','r1sys',this.value)">
+        <input class="ni" value="${m.r1dia||''}" placeholder="DIA" style="opacity:.5" oninput="onMeasInp('${m.id}','r1dia',this.value)">
+        <div style="font-size:10px;color:#ccc;text-decoration:line-through">descartada</div>
+
+        <div style="font-weight:700;color:${sc};font-size:11px">2ª</div>
+        <input class="ti" value="${m.r2time||''}" type="time" oninput="onMeasInp('${m.id}','r2time',this.value)">
+        <input class="ni" value="${m.r2sys||''}" placeholder="SYS" style="border-color:${r2se?'#e74c3c':'#ccc'}" oninput="onMeasInp('${m.id}','r2sys',this.value)">
+        <input class="ni" value="${m.r2dia||''}" placeholder="DIA" style="border-color:${r2de?'#e74c3c':'#ccc'}" oninput="onMeasInp('${m.id}','r2dia',this.value)">
+        <div style="font-size:10px;color:#aaa">✓</div>
+
+        <div style="font-weight:700;color:${sc};font-size:11px">3ª</div>
+        <input class="ti" value="${m.r3time||''}" type="time" oninput="onMeasInp('${m.id}','r3time',this.value)">
+        <input class="ni" value="${m.r3sys||''}" placeholder="SYS" style="border-color:${r3se?'#e74c3c':'#ccc'}" oninput="onMeasInp('${m.id}','r3sys',this.value)">
+        <input class="ni" value="${m.r3dia||''}" placeholder="DIA" style="border-color:${r3de?'#e74c3c':'#ccc'}" oninput="onMeasInp('${m.id}','r3dia',this.value)">
+        <div style="font-size:10px;color:#aaa">${f3}</div>
+      </div>
+      ${ana&&ana.anomR1Dia?`<div style="font-size:10px;color:#8e44ad;margin-top:6px">* PAD anómala en 1ª lectura (&lt;50 mmHg) — descartada por protocolo.</div>`:''}
+      ${ana&&ana.anomPP?`<div style="font-size:10px;color:#8e44ad;margin-top:4px">† Presión de pulso &lt;20 mmHg — valor potencialmente artefactual.</div>`:''}
+    </div>`;
+  }
+
+  return `<div>
+    ${statsBar}
+    ${txBar}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-weight:800;color:#1a5276;font-size:14px">${ST.meas.length} sesión(es)</div>
+      <button class="btn" style="background:#27ae60;color:#fff;padding:7px 16px" onclick="addMeas()">+ Añadir sesión</button>
+    </div>
+    ${measCards}
+    <div style="text-align:right;margin-top:8px">
+      <button class="btn" style="background:#1a5276;color:#fff;padding:11px 28px" ${!ST.meas.length?'disabled':''} onclick="setTab(2)">Ver Informe →</button>
+    </div>
+  </div>`;
+}
+
+function buildTab2() {
+  const st=calcStats(ST.meas);
+  const status=getStatus(st,ST.info.clinicSys,ST.info.clinicDia);
+  const sorted=[...ST.meas].filter(m=>smean(m)).sort((a,b)=>a.date!==b.date?a.date.localeCompare(b.date):(a.session==='morning'?-1:1));
+  const tSorted=[...ST.treatments].sort((a,b)=>a.date.localeCompare(b.date));
+
+  const obsCol={alert:'#c0392b',warn:'#b7770d',info:'#1a5276',ok:'#1e8449',note:'#6c3483'};
+  const obsBg={alert:'#fdedec',warn:'#fef8f0',info:'#f0f6fb',ok:'#f0faf4',note:'#f8f0fb'};
+
+  let obsSection='';
+  if(ST.loadObs){
+    obsSection=`<div class="card" style="text-align:center;padding:24px;color:#1a5276;font-weight:700">⏳ Generando observaciones clínicas con IA...</div>`;
+  } else if(ST.obs.length>0){
+    obsSection=`<div class="card"><div style="font-weight:800;color:#1a5276;margin-bottom:12px;font-size:13px">🔬 Observaciones Clínicas</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px">
+      ${ST.obs.map(o=>{const t=o.tipo||'info';return`<div style="background:${obsBg[t]||obsBg.info};border-left:4px solid ${obsCol[t]||obsCol.info};border-radius:6px;padding:10px 14px"><div style="font-weight:700;color:${obsCol[t]||obsCol.info};font-size:12px;text-transform:uppercase;margin-bottom:6px">${o.titulo||o.title||''}</div><div style="font-size:12.5px;color:#444;line-height:1.6">${o.texto||o.text||''}</div></div>`;}).join('')}
+    </div></div>`;
+  }
+
+  let statsCards='';
+  if(st){
+    const chips=[
+      {l:'Media Global',v:st.global.sys+'/'+st.global.dia,u:'mmHg',c:st.globalEl?'#c0392b':'#1a5276'},
+      ...(st.mornG?[{l:'Mañana',v:st.mornG.sys+'/'+st.mornG.dia,u:'mmHg',c:st.mornEl?'#c0392b':'#27ae60'}]:[]),
+      ...(st.aftG?[{l:'Tarde',v:st.aftG.sys+'/'+st.aftG.dia,u:'mmHg',c:st.aftEl?'#c0392b':'#e67e22'}]:[]),
+      {l:'Días válidos',v:String(st.validDays),u:st.totalSessions+' sesiones',c:'#8e44ad'},
+      ...(st.avgHR?[{l:'FC media',v:String(st.avgHR),u:'lpm',c:'#555'}]:[]),
+    ];
+    statsCards=`<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      ${chips.map(c=>`<div style="flex:1;min-width:100px;background:#fff;border:2px solid ${c.c}20;border-top:4px solid ${c.c};border-radius:10px;padding:10px 8px;text-align:center"><div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;margin-bottom:4px">${c.l}</div><div style="font-size:22px;font-weight:900;color:${c.c};line-height:1">${c.v}</div><div style="font-size:10px;color:#bbb;margin-top:2px">${c.u}</div></div>`).join('')}
+    </div>`;
+  }
+
+  let statsTable='';
+  if(st){
+    const rows=[
+      {l:'Global',sys:st.global.sys,dia:st.global.dia,pSd:st.pasSd,dSd:st.padSd,pRng:st.pasMin&&st.pasMax?(st.pasMin+'–'+st.pasMax):'—',n:st.totalSessions},
+      ...(st.mornG?[{l:'Mañana',sys:st.mornG.sys,dia:st.mornG.dia,pSd:st.mornPasSd,dSd:st.mornPadSd,pRng:st.mornPasMin&&st.mornPasMax?(st.mornPasMin+'–'+st.mornPasMax):'—',n:st.mornCount}]:[]),
+      ...(st.aftG?[{l:'Tarde',sys:st.aftG.sys,dia:st.aftG.dia,pSd:st.aftPasSd,dSd:st.aftPadSd,pRng:st.aftPasMin&&st.aftPasMax?(st.aftPasMin+'–'+st.aftPasMax):'—',n:st.aftCount}]:[]),
+    ];
+    statsTable=`<div class="card"><div style="font-weight:800;color:#1a5276;margin-bottom:6px;font-size:13px">Resumen estadístico</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr style="background:#1a5276;color:#fff">${['Período','PAS media','PAD media','PAS DE','PAD DE','Rango PAS','Sesiones'].map(h=>`<th style="padding:6px 8px;text-align:center;font-size:11px">${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((r,i)=>`<tr style="background:${i%2?'#f9fbff':'#fff'}">${[r.l,r.sys+' mmHg',r.dia+' mmHg','±'+r.pSd,'±'+r.dSd,r.pRng,r.n].map((v,j)=>`<td style="padding:5px 8px;text-align:${j===0?'left':'center'};border-bottom:1px solid #eee;font-weight:${j===0?700:400};color:${j===0?'#1a5276':'#333'}">${v}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+
+  let clinSummary='';
+  if(st){
+    const rows2=[
+      ['Efecto de alerta medio',(st.avgAlert>0?'+':'')+st.avgAlert+' mmHg sistólica (1ª vs. media 2ª+3ª)'],
+      ...(st.mornG&&st.aftG?[['Gradiente mañana–tarde','PAS '+rnd(Math.abs(st.mornG.sys-st.aftG.sys))+' mmHg · PAD '+rnd(Math.abs(st.mornG.dia-st.aftG.dia))+' mmHg']]:[]),
+      ['Sesiones por encima del umbral',st.elevCount+' de '+st.totalSessions],
+      ...(st.mornCount?[['Mañanas con PAD ≥85 mmHg',st.mornElDia+' de '+st.mornCount]]:[]),
+      ['Variabilidad PAS (DE global)','±'+st.pasSd+' mmHg · rango: '+(st.pasMin||'—')+'–'+(st.pasMax||'—')+' mmHg'],
+      ...(st.avgHR?[['FC media global',st.avgHR+' lpm'+(st.mornHR?' (mañana '+st.mornHR+', tarde '+(st.aftHR||'—')+')':'')]]:[])
+    ];
+    clinSummary=`<div class="card"><div style="font-weight:800;color:#1a5276;margin-bottom:8px;font-size:13px">Resumen clínico</div>
+    ${rows2.map(pair=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f0f0f0;font-size:13px"><span style="color:#666">${pair[0]}</span><span style="font-weight:700;color:#1a5276">${pair[1]}</span></div>`).join('')}
+    </div>`;
+  }
+
+  let txCard='';
+  if(tSorted.length>0){
+    txCard=`<div class="card" style="border-left:4px solid #8e44ad;background:#faf5ff">
+      <div style="font-weight:800;color:#7c3aed;margin-bottom:10px;font-size:13px">💊 Evolución del tratamiento</div>
+      ${tSorted.map(t=>`<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;font-size:13px"><span style="background:${t.type==='cambio'?'#fef5e7':'#f5eef8'};color:${t.type==='cambio'?'#b7770d':'#8e44ad'};border:1px solid ${t.type==='cambio'?'#e67e22':'#8e44ad'};border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;white-space:nowrap">${t.type==='cambio'?'🔄 Cambio':'🟣 Inicio'}</span><span><strong>${fdm(t.date)}</strong> — ${esc(t.description)}</span></div>`).join('')}
+    </div>`;
+  }
+
+  let charts='';
+  if(sorted.length>=2){
+    charts+=`<div class="card"><div style="font-weight:800;color:#1a5276;margin-bottom:10px;font-size:13px">📈 Evolución temporal — PAS y PAD</div>${buildEvolSVG(sorted,tSorted)}</div>`;
+  }
+  if(st&&st.mornG&&st.aftG){
+    charts+=`<div class="card"><div style="font-weight:800;color:#1a5276;margin-bottom:10px;font-size:13px">📊 Comparativa mañana vs. tarde</div><div style="display:flex;justify-content:center">${buildBarSVG(st)}</div></div>`;
+  }
+  if(st&&st.alertaDeltas.length>=2){
+    charts+=`<div class="card"><div style="font-weight:800;color:#1a5276;margin-bottom:10px;font-size:13px">⚡ Efecto de alerta — Δ PAS</div>${buildAlertaSVG(st.alertaDeltas)}<div style="font-size:11px;color:#888;margin-top:6px;text-align:center">Valores positivos = efecto de alerta normal · Negativos = patrón invertido</div></div>`;
+  }
+  if(sorted.filter(m=>nn(m.hr)).length>=2){
+    charts+=`<div class="card"><div style="font-weight:800;color:#1a5276;margin-bottom:10px;font-size:13px">💓 Evolución FC</div>${buildFCSVG(sorted)}</div>`;
+  }
+
+  return `<div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+      <button class="btn" style="background:${ST.loadObs?'#95a5a6':'#27ae60'};color:#fff;font-size:15px;padding:13px 30px" ${ST.loadObs?'disabled':''} onclick="openReport()">
+        ${ST.loadObs?'⏳ Generando observaciones...':'🖨️ Abrir informe completo / Guardar PDF'}
+      </button>
+      <button class="btn" style="background:#6c757d;color:#fff" ${ST.loadObs||!ST.meas.length?'disabled':''} onclick="genObs()">🔄 Actualizar observaciones</button>
+    </div>
+    ${st?buildSemaforoHTML(status):''}
+    ${statsCards}
+    ${statsTable}
+    ${clinSummary}
+    ${txCard}
+    ${charts}
+    ${obsSection}
+    <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:10px;padding:14px;font-size:12px;color:#5d4037;margin-bottom:14px">
+      ⚠️ <strong>AVISO:</strong> Este informe tiene carácter informativo. Los resultados deben ser valorados e interpretados por el médico, quien determinará las decisiones clínicas oportunas.
+    </div>
+    <div style="text-align:center;padding:10px 0;border-top:2px solid #1a5276">
+      <div style="font-weight:700;color:#1a5276;font-size:14px">Farmacia Espejo · Tel. 950 401 678</div>
+      <div style="font-size:12px;color:#888;margin-top:2px">Dr. José Espejo Guerrero · Colegiado nº 507 · Adra (Almería)</div>
+    </div>
+  </div>`;
+}
+
+// ─── Render principal ────────────────────────────────────────────────
+function render() {
+  saveFoc();
+  const TABS=['1. Datos y Foto','2. Mediciones','3. Informe'];
+  const tabBtns=TABS.map((t,i)=>`<button class="tab-btn" style="background:${ST.tab===i?'#fff':'transparent'};color:${ST.tab===i?'#1a5276':'rgba(255,255,255,.85)'};font-weight:${ST.tab===i?800:600}" onclick="setTab(${i})">${t}</button>`).join('');
+  const content=ST.tab===0?buildTab0():ST.tab===1?buildTab1():buildTab2();
+  document.getElementById('app').innerHTML=`
+    <div style="background:linear-gradient(135deg,#1a5276,#2e86c1);padding:14px 16px 0">
+      <div style="font-size:17px;font-weight:900;color:#fff;margin-bottom:10px">AMPA · Farmacia Espejo · Adra</div>
+      <div style="display:flex;gap:2px">${tabBtns}</div>
+    </div>
+    <div style="max-width:900px;margin:0 auto;padding:14px">${content}</div>
+  `;
+  restoreFoc();
+}
+
+function setTab(i) {
+  ST.tab=i;
+  if(i===2 && ST.obs.length===0 && ST.meas.filter(m=>smean(m)).length>0 && !ST.loadObs) {
+    render();
+    genObs();
+  } else {
+    render();
+  }
+}
+
+// ─── Actualización parcial de stats (sin re-render completo) ─────────
+function refreshStats() {
+  const el=document.getElementById('stats-overlay');
+  if(!el) return;
+  const st=calcStats(ST.meas);
+  const status=getStatus(st,ST.info.clinicSys,ST.info.clinicDia);
+  if(!st){el.innerHTML='';return;}
+  const chips=[
+    {l:'Global AMPA',v:st.global.sys+'/'+st.global.dia,c:st.globalEl?'#c0392b':'#1a5276'},
+    ...(st.mornG?[{l:'Mañana',v:st.mornG.sys+'/'+st.mornG.dia,c:st.mornEl?'#c0392b':'#27ae60'}]:[]),
+    ...(st.aftG?[{l:'Tarde',v:st.aftG.sys+'/'+st.aftG.dia,c:st.aftEl?'#c0392b':'#e67e22'}]:[]),
+    {l:'Días válidos',v:st.validDays+'d / '+st.totalSessions+'ses.',c:'#8e44ad'},
+  ];
+  el.innerHTML=`
+    ${buildSemaforoHTML(status)}
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${chips.map(c=>`<div style="display:flex;gap:6px;align-items:center;padding:4px 10px;background:${c.c}12;border:1.5px solid ${c.c}30;border-radius:7px"><span style="font-size:10px;color:#888;font-weight:700;text-transform:uppercase;white-space:nowrap">${c.l}</span><span style="font-size:13px;font-weight:800;color:${c.c};white-space:nowrap">${c.v}</span></div>`).join('')}
+    </div>`;
+}
+
+// ─── Manejadores de input (sin re-render) ───────────────────────────
+function onMeasInp(id,field,value) {
+  const m=ST.meas.find(m=>String(m.id)===String(id));
+  if(m){m[field]=nv(value);refreshStats();}
+}
+function onMeasChg(id,field,value) {
+  const m=ST.meas.find(m=>String(m.id)===String(id));
+  if(m){m[field]=value;render();}
+}
+function updTx(id,field,value) {
+  const t=ST.treatments.find(t=>String(t.id)===String(id));
+  if(t)t[field]=value;
+}
+function toggleTxType(id) {
+  const t=ST.treatments.find(t=>String(t.id)===String(id));
+  if(t){t.type=t.type==='cambio'?'inicial':'cambio';render();}
+}
+
+// ─── Acciones estructurales (sí re-renderizan) ───────────────────────
+function addMeas() {
+  ST.meas.push({id:Date.now(),date:todayISO(),session:'morning',r1sys:'',r1dia:'',r1time:'',r2sys:'',r2dia:'',r2time:'',r3sys:'',r3dia:'',r3time:'',hr:''});
+  ST.obs=[];render();
+  setTimeout(()=>window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}),80);
+}
+function delMeas(id) {
+  ST.meas=ST.meas.filter(m=>String(m.id)!==String(id));
+  ST.obs=[];render();
+}
+function addTx(type) {
+  ST.treatments.push({id:Date.now(),date:todayISO(),description:'',type});
+  render();
+}
+function delTx(id) {
+  ST.treatments=ST.treatments.filter(t=>String(t.id)!==String(id));
+  render();
+}
+
+// ─── Manejo de archivos ──────────────────────────────────────────────
+function handleFileChange(file) {
+  if(!file) return;
+  _fileRef=file;
+  if(file.name.match(/\.(xlsx|xls)$/i)){
+    _imgUrl=null;ST.imgData=null;ST.extractErr='';
+    const r=new FileReader();
+    r.onload=ev=>{
+      try{const wb=XLSX.read(ev.target.result);const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});ST.excelRows=rows.length;}
+      catch(e){ST.excelRows=0;}
+      render();
+    };
+    r.readAsArrayBuffer(file);
+  } else if(file.type.startsWith('image/')){
+    _imgUrl=URL.createObjectURL(file);ST.extractErr='';ST.excelRows=0;
+    const r=new FileReader();
+    r.onload=ev=>{ST.imgData=ev.target.result.split(',')[1];ST.imgType=file.type;render();};
+    r.readAsDataURL(file);
+  }
+}
+
+// ─── Extracción foto ─────────────────────────────────────────────────
+async function doExtractPhoto() {
+  if(!ST.imgData){return;}
+  ST.extracting=true;ST.extractErr='';render();
+  try{
+    const d=await callAPI([{role:'user',content:[
+      {type:'image',source:{type:'base64',media_type:ST.imgType,data:ST.imgData}},
+      {type:'text',text:'Extrae de esta imagen AMPA: (1) todas las mediciones y (2) tratamientos con fechas. Mediciones: date YYYY-MM-DD (2026 si no consta), session morning/afternoon, r1/r2/r3 con sys dia time HH:MM (null si no), hr FC. Tratamientos: date YYYY-MM-DD, description, type: inicial o cambio. SOLO JSON sin backticks: {"measurements":[{"date":"2026-04-01","session":"morning","r1sys":145,"r1dia":92,"r1time":"10:00","r2sys":138,"r2dia":88,"r2time":"10:02","r3sys":136,"r3dia":86,"r3time":"10:04","hr":72}],"treatments":[],"notes":""}'}
+    ]}],3000);
+    const txt=(d.content||[]).map(c=>c.text||'').join('');
+    const parsed=JSON.parse(txt.replace(/```json|```/g,'').trim());
+    ST.meas=(parsed.measurements||[]).map((m,i)=>({...m,id:Date.now()+i,r1time:m.r1time||'',r2time:m.r2time||'',r3time:m.r3time||''}));
+    if(parsed.treatments&&parsed.treatments.length)ST.treatments=parsed.treatments.map((t,i)=>({...t,id:Date.now()+i+10000}));
+    ST.obs=[];ST.tab=1;
+  }catch(e){ST.extractErr='Error al extraer: '+e.message+'. Revisa la foto o introduce manualmente.';}
+  ST.extracting=false;render();
+}
+
+// ─── Extracción Excel ────────────────────────────────────────────────
+async function doExtractExcel() {
+  if(!_fileRef) return;
+  ST.excelProcessing=true;ST.extractErr='';render();
+  try{
+    const ab=await _fileRef.arrayBuffer();
+    const wb=XLSX.read(ab);const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+    if(!rows.length){ST.extractErr='El Excel está vacío.';ST.excelProcessing=false;render();return;}
+    const preview=JSON.stringify(rows.slice(0,50));
+    const d=await callAPI([{role:'user',content:'Estos son datos de un Excel de registro AMPA. Primera fila = cabeceras. Extrae TODAS las mediciones y tratamientos.\n\nDatos:\n'+preview+'\n\nNormas:\n- date YYYY-MM-DD (2026 si no consta)\n- session: morning si mañana/antes 14h, afternoon si tarde/después 14h\n- r1/r2/r3: sys dia time HH:MM (null si no hay)\n- hr: FC si existe, null si no\nSOLO JSON sin backticks: {"measurements":[...],"treatments":[],"notes":""}'}],3000);
+    const txt=(d.content||[]).map(c=>c.text||'').join('');
+    const parsed=JSON.parse(txt.replace(/```json|```/g,'').trim());
+    ST.meas=(parsed.measurements||[]).map((m,i)=>({...m,id:Date.now()+i,r1time:m.r1time||'',r2time:m.r2time||'',r3time:m.r3time||''}));
+    if(parsed.treatments&&parsed.treatments.length)ST.treatments=parsed.treatments.map((t,i)=>({...t,id:Date.now()+i+10000}));
+    ST.obs=[];ST.tab=1;
+  }catch(e){ST.extractErr='Error al procesar el Excel: '+e.message;}
+  ST.excelProcessing=false;render();
+}
+
+function doAddManual(){addMeas();ST.tab=1;render();}
+
+function doDownloadTemplate() {
+  const data=[
+    ['Fecha','Sesión','Hora 1ª','PAS 1ª','PAD 1ª','Hora 2ª','PAS 2ª','PAD 2ª','Hora 3ª','PAS 3ª','PAD 3ª','FC (lpm)'],
+    ['2026-04-01','Mañana','10:00',145,92,'10:02',138,88,'10:04',136,86,72],
+    ['2026-04-01','Tarde','18:00',130,82,'18:02',125,80,'18:04',123,79,70],
+    ['2026-04-02','Mañana','10:15',142,90,'10:17',135,86,'10:19',132,84,74],
+    ['2026-04-02','Tarde','19:00',128,78,'19:02',122,76,'19:04',120,75,68],
+    ['2026-04-03','Mañana','09:50',138,88,'09:52',132,84,'09:54',130,83,70],
+    ['2026-04-03','Tarde','18:30',126,76,'18:32',120,74,'18:34',119,73,66],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  ws['!cols']=[{wch:12},{wch:10},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:10}];
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'AMPA');
+  XLSX.writeFile(wb,'plantilla_ampa_farmacia_espejo.xlsx');
+}
+
+// ─── Generación de observaciones ─────────────────────────────────────
+async function fetchObs() {
+  const st=calcStats(ST.meas);if(!st) return [];
+  const status=getStatus(st,ST.info.clinicSys,ST.info.clinicDia);
+  try{
+    const sorted=[...ST.meas].filter(m=>smean(m)).sort((a,b)=>a.date!==b.date?a.date.localeCompare(b.date):(a.session==='morning'?-1:1));
+    const tSorted=[...ST.treatments].sort((a,b)=>a.date.localeCompare(b.date));
+    const elevCount=sorted.filter(m=>{const me=smean(m);return me&&(me.sys>=135||me.dia>=85);}).length;
+    const gP=st.mornG&&st.aftG?rnd(Math.abs(st.mornG.sys-st.aftG.sys)):null;
+    const gD=st.mornG&&st.aftG?rnd(Math.abs(st.mornG.dia-st.aftG.dia)):null;
+    const sessLines=[];
+    for(const m of sorted){
+      const me=smean(m);const fl=[];
+      if(nn(m.r3sys)>nn(m.r2sys)+2)fl.push('PAS+');if(nn(m.r3dia)>nn(m.r2dia)+2)fl.push('PAD+');
+      const elMark=me&&(me.sys>=135||me.dia>=85)?' [ELEVADA]':'';
+      const flMark=fl.length?' ['+fl.join(',')+']':'';
+      const txMark=tSorted.filter(t=>t.date===m.date).map(t=>' ['+t.type.toUpperCase()+': '+t.description+']').join('');
+      const dSys=nn(m.r1sys)?(' delta=+'+(rnd(nn(m.r1sys)-(nn(m.r2sys)+nn(m.r3sys))/2))):'';
+      sessLines.push('  - '+fdm(m.date)+' '+(m.session==='morning'?'Manana':'Tarde')+': '+(me?me.sys+'/'+me.dia:'---')+' mmHg'+elMark+flMark+txMark+dSys);
+    }
+    const txDesc=tSorted.map(t=>(t.type==='cambio'?'CAMBIO':'INICIO')+' ('+fdm(t.date)+'): '+t.description).join(' --> ');
+    const prompt=[
+      'Eres farmaceutico comunitario especialista en HTA. Redacta 5-7 observaciones clinicas para un informe AMPA.',
+      'Media global: '+st.global.sys+'/'+st.global.dia+' mmHg. Estado: '+status.text,
+      st.mornG?'Media manana: '+st.mornG.sys+'/'+st.mornG.dia+' mmHg (DE PAS:'+st.mornPasSd+') '+(st.mornEl?'ELEVADA':'OK'):'',
+      st.aftG?'Media tarde: '+st.aftG.sys+'/'+st.aftG.dia+' mmHg (DE PAS:'+st.aftPasSd+') '+(st.aftEl?'ELEVADA':'OK'):'',
+      'Sesiones totales: '+st.totalSessions+'. Dias validos: '+st.validDays+'.',
+      gP!==null?'Gradiente manana-tarde: PAS '+gP+' / PAD '+gD+' mmHg':'',
+      'Efecto alerta medio: '+(st.avgAlert>0?'+':'')+st.avgAlert+' mmHg. Sesiones elevadas: '+elevCount+'/'+st.totalSessions+'.',
+      st.avgHR?'FC media: '+st.avgHR+' lpm.':'',
+      tSorted.length?'TRATAMIENTO: '+txDesc:'',
+      'PA consulta: '+(ST.info.clinicSys?ST.info.clinicSys+'/'+ST.info.clinicDia+' mmHg':'no disponible')+'.',
+      'SESIONES DETALLE:', ...sessLines,
+      'REGLAS: 1) NUNCA hipertension como diagnostico. 2) Usar: PA dentro de objetivos AMPA / valores por encima de objetivos AMPA. 3) No prescribir. 4) Citar fechas y datos numericos. 5) Tipos: alert,warn,info,ok,note. 6) 2-4 frases por observacion.',
+      'SOLO JSON: {"observations":[{"tipo":"alert","titulo":"Titulo","texto":"Analisis..."}]}'
+    ].filter(l=>l).join('\n');
+    const d=await callAPI([{role:'user',content:prompt}],2000);
+    const txt=(d.content||[]).map(c=>c.text||'').join('');
+    const parsed=JSON.parse(txt.replace(/```json|```/g,'').trim());
+    return parsed.observations||[];
+  }catch(e){return [];}
+}
+
+async function genObs() {
+  ST.loadObs=true;render();
+  ST.obs=await fetchObs();
+  ST.loadObs=false;render();
+}
+
+async function openReport() {
+  let reportObs=ST.obs;
+  if(reportObs.length===0 && ST.meas.filter(m=>smean(m)).length>0){
+    ST.loadObs=true;render();
+    reportObs=await fetchObs();
+    ST.obs=reportObs;ST.loadObs=false;
+  }
+  const st=calcStats(ST.meas);
+  const status=getStatus(st,ST.info.clinicSys,ST.info.clinicDia);
+  const html=buildReport(ST.meas,ST.info,st,status,reportObs,ST.treatments);
+  const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+  render();
+}
+
+// ─── Arranque ────────────────────────────────────────────────────────
+render();
+
+</script>
+</body>
+</html>
