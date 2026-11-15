@@ -21,8 +21,8 @@ El informe tiene carácter informativo, no constituye un diagnóstico y debe ser
 
 ## Cómo citar
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24242922.svg)](https://doi.org/10.5281/zenodo.24242922)
-Espejo Guerrero J, Espejo Martín O, Espejo Martín J. InformAMPA v1.1.0 [software]. Zenodo; 2026. doi:10.5281/zenodo.24242922
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24243316.svg)](https://doi.org/10.5281/zenodo.24243316)
+Espejo Guerrero J, Espejo Martín O, Espejo Martín J. InformAMPA v1.1.1 [software]. Zenodo; 2026. doi:10.5281/zenodo.24243316
 
 ## Licencia
 MIT. Consulta el archivo [LICENSE](LICENSE).
