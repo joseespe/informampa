@@ -1,0 +1,134 @@
+{
+ "S1": {
+  "version": "1.1.1",
+  "sesiones": 14,
+  "dias": 7,
+  "global": {
+   "sys": 119.7,
+   "dia": 74.5
+  },
+  "manana": {
+   "sys": 120,
+   "dia": 75.5
+  },
+  "tarde": {
+   "sys": 119.4,
+   "dia": 73.5
+  },
+  "de_pas": 2.5,
+  "de_pad": 2,
+  "elevadas": 0,
+  "efecto_alerta": 6.7,
+  "estado": "ÓPTIMO"
+ },
+ "S2": {
+  "version": "1.1.1",
+  "sesiones": 14,
+  "dias": 7,
+  "global": {
+   "sys": 147.6,
+   "dia": 92
+  },
+  "manana": {
+   "sys": 148.9,
+   "dia": 93.9
+  },
+  "tarde": {
+   "sys": 146.4,
+   "dia": 90
+  },
+  "de_pas": 3,
+  "de_pad": 2.4,
+  "elevadas": 14,
+  "efecto_alerta": 7,
+  "estado": "ATENCIÓN"
+ },
+ "S3": {
+  "version": "1.1.1",
+  "sesiones": 14,
+  "dias": 7,
+  "global": {
+   "sys": 129.2,
+   "dia": 81.5
+  },
+  "manana": {
+   "sys": 138.5,
+   "dia": 86.1
+  },
+  "tarde": {
+   "sys": 119.9,
+   "dia": 76.9
+  },
+  "de_pas": 9.9,
+  "de_pad": 5.3,
+  "elevadas": 7,
+  "efecto_alerta": 7.1,
+  "estado": "ATENCIÓN PARCIAL"
+ },
+ "S4": {
+  "version": "1.1.1",
+  "sesiones": 12,
+  "dias": 6,
+  "global": {
+   "sys": 121.1,
+   "dia": 76.6
+  },
+  "manana": {
+   "sys": 123.9,
+   "dia": 77.4
+  },
+  "tarde": {
+   "sys": 118.3,
+   "dia": 75.8
+  },
+  "de_pas": 4.2,
+  "de_pad": 2,
+  "elevadas": 0,
+  "efecto_alerta": 7.4,
+  "estado": "ÓPTIMO"
+ },
+ "S5": {
+  "version": "1.1.1",
+  "sesiones": 14,
+  "dias": 7,
+  "global": {
+   "sys": 123.3,
+   "dia": 76.2
+  },
+  "manana": {
+   "sys": 122.7,
+   "dia": 76.5
+  },
+  "tarde": {
+   "sys": 123.9,
+   "dia": 75.9
+  },
+  "de_pas": 7.2,
+  "de_pad": 4.1,
+  "elevadas": 1,
+  "efecto_alerta": 7,
+  "estado": "BATA BLANCA"
+ },
+ "S6": {
+  "version": "1.1.1",
+  "sesiones": 14,
+  "dias": 7,
+  "global": {
+   "sys": 140.6,
+   "dia": 87.9
+  },
+  "manana": {
+   "sys": 143.1,
+   "dia": 88.8
+  },
+  "tarde": {
+   "sys": 138,
+   "dia": 86.9
+  },
+  "de_pas": 3.8,
+  "de_pad": 2.2,
+  "elevadas": 14,
+  "efecto_alerta": 7.6,
+  "estado": "ENMASCARADA"
+ }
+}

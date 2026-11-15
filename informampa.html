@@ -35,7 +35,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;backgroun
 //  Opción B (versión pública): endpoint = 'https://tu-worker.workers.dev'
 // ════════════════════════════════════════════════════════════════════
 // ─── Identidad de la herramienta ─────────────────────────────────────
-const APP = { name: 'InformAMPA', version: '1.1.0' };
+const APP = { name: 'InformAMPA', version: '1.1.1' };
 
 // ─── Datos del establecimiento: vacíos por defecto, los rellena cada
 //     farmacia y se guardan solo en este navegador (localStorage) ─────────
@@ -66,7 +66,7 @@ const avg = arr => arr.length ? r1(arr.reduce((a,b)=>a+b,0)/arr.length) : null;
 const sdv = arr => {
   if(arr.length<2) return 0;
   const m=arr.reduce((a,b)=>a+b,0)/arr.length;
-  return r1(Math.sqrt(arr.reduce((s,x)=>s+(x-m)*(x-m),0)/arr.length));
+  return r1(Math.sqrt(arr.reduce((s,x)=>s+(x-m)*(x-m),0)/(arr.length-1)));
 };
 const nn  = v => Number(v)||0;
 const nv  = v => v===''?'':(isNaN(+v)?v:+v);
@@ -83,6 +83,12 @@ function smean(m) {
   if(!s||!S||!d||!D) return null;
   return {sys:rnd((s+S)/2),dia:rnd((d+D)/2)};
 }
+// Media de sesión sin redondear, solo para cálculos estadísticos
+function smeanRaw(m) {
+  const s=nn(m.r2sys),S=nn(m.r3sys),d=nn(m.r2dia),D=nn(m.r3dia);
+  if(!s||!S||!d||!D) return null;
+  return {sys:(s+S)/2,dia:(d+D)/2};
+}
 function sessionAna(m) {
   const mn=smean(m); if(!mn) return null;
   const s2=nn(m.r2sys),s3=nn(m.r3sys),d2=nn(m.r2dia),d3=nn(m.r3dia);
@@ -96,28 +102,28 @@ function sessionAna(m) {
   };
 }
 function calcStats(meas) {
-  const valid=meas.filter(m=>smean(m));
+  const valid=meas.filter(m=>smeanRaw(m));
   if(!valid.length) return null;
   const morn=valid.filter(m=>m.session==='morning');
   const aft=valid.filter(m=>m.session==='afternoon');
-  const ms=arr=>arr.map(m=>smean(m));
+  const ms=arr=>arr.map(m=>smeanRaw(m));
   const gavg=arr=>({sys:avg(arr.map(x=>x.sys)),dia:avg(arr.map(x=>x.dia))});
   const global=gavg(ms(valid));
   const mornG=morn.length?gavg(ms(morn)):null;
   const aftG=aft.length?gavg(ms(aft)):null;
-  const pasList=valid.map(m=>smean(m).sys);
-  const padList=valid.map(m=>smean(m).dia);
-  const mornPasList=morn.map(m=>smean(m).sys);
-  const mornPadList=morn.map(m=>smean(m).dia);
-  const aftPasList=aft.map(m=>smean(m).sys);
-  const aftPadList=aft.map(m=>smean(m).dia);
+  const pasList=valid.map(m=>smeanRaw(m).sys);
+  const padList=valid.map(m=>smeanRaw(m).dia);
+  const mornPasList=morn.map(m=>smeanRaw(m).sys);
+  const mornPadList=morn.map(m=>smeanRaw(m).dia);
+  const aftPasList=aft.map(m=>smeanRaw(m).sys);
+  const aftPadList=aft.map(m=>smeanRaw(m).dia);
   const alerts=valid.filter(m=>nn(m.r1sys)).map(m=>r1(nn(m.r1sys)-(nn(m.r2sys)+nn(m.r3sys))/2));
   const avgOf=arr=>arr.length?rnd(arr.reduce((a,b)=>a+b,0)/arr.length):null;
   const hrs=valid.filter(m=>nn(m.hr)).map(m=>nn(m.hr));
   const mHrs=morn.filter(m=>nn(m.hr)).map(m=>nn(m.hr));
   const aHrs=aft.filter(m=>nn(m.hr)).map(m=>nn(m.hr));
-  const elevCount=valid.filter(m=>{const x=smean(m);return x&&(x.sys>=135||x.dia>=85);}).length;
-  const mornElDia=morn.filter(m=>{const x=smean(m);return x&&x.dia>=85;}).length;
+  const elevCount=valid.filter(m=>{const x=smeanRaw(m);return x&&(x.sys>=135||x.dia>=85);}).length;
+  const mornElDia=morn.filter(m=>{const x=smeanRaw(m);return x&&x.dia>=85;}).length;
   const alertaDeltas=valid.filter(m=>nn(m.r1sys)).map(m=>({
     date:m.date,session:m.session,
     deltaSys:rnd(nn(m.r1sys)-(nn(m.r2sys)+nn(m.r3sys))/2),
@@ -135,25 +141,25 @@ function calcStats(meas) {
     avgHR:avgOf(hrs),mornHR:avgOf(mHrs),aftHR:avgOf(aHrs),
     elevCount,mornElDia,alertaDeltas,
     pasSd:sdv(pasList),padSd:sdv(padList),
-    pasMax:pasList.length?Math.max(...pasList):null,pasMin:pasList.length?Math.min(...pasList):null,
-    padMax:padList.length?Math.max(...padList):null,padMin:padList.length?Math.min(...padList):null,
+    pasMax:pasList.length?rnd(Math.max(...pasList)):null,pasMin:pasList.length?rnd(Math.min(...pasList)):null,
+    padMax:padList.length?rnd(Math.max(...padList)):null,padMin:padList.length?rnd(Math.min(...padList)):null,
     mornPasSd:sdv(mornPasList),mornPadSd:sdv(mornPadList),
     aftPasSd:sdv(aftPasList),aftPadSd:sdv(aftPadList),
-    mornPasMax:mornPasList.length?Math.max(...mornPasList):null,mornPasMin:mornPasList.length?Math.min(...mornPasList):null,
-    mornPadMax:mornPadList.length?Math.max(...mornPadList):null,mornPadMin:mornPadList.length?Math.min(...mornPadList):null,
-    aftPasMax:aftPasList.length?Math.max(...aftPasList):null,aftPasMin:aftPasList.length?Math.min(...aftPasList):null,
-    aftPadMax:aftPadList.length?Math.max(...aftPadList):null,aftPadMin:aftPadList.length?Math.min(...aftPadList):null
+    mornPasMax:mornPasList.length?rnd(Math.max(...mornPasList)):null,mornPasMin:mornPasList.length?rnd(Math.min(...mornPasList)):null,
+    mornPadMax:mornPadList.length?rnd(Math.max(...mornPadList)):null,mornPadMin:mornPadList.length?rnd(Math.min(...mornPadList)):null,
+    aftPasMax:aftPasList.length?rnd(Math.max(...aftPasList)):null,aftPasMin:aftPasList.length?rnd(Math.min(...aftPasList)):null,
+    aftPadMax:aftPadList.length?rnd(Math.max(...aftPadList)):null,aftPadMin:aftPadList.length?rnd(Math.min(...aftPadList)):null
   };
 }
 function getStatus(st,cS,cD) {
   if(!st) return {text:'Sin datos',color:'#888',bg:'#f5f5f5',badge:'---',semColor:'#ccc'};
-  if(st.globalEl) return {text:'Valores por encima de objetivos AMPA',color:'#c0392b',bg:'#fdecea',badge:'ATENCIÓN',semColor:'#e74c3c'};
-  if(st.mornEl&&!st.aftEl) return {text:'Media global OK · Media mañana por encima del umbral',color:'#b7770d',bg:'#fef9e7',badge:'ATENCIÓN PARCIAL',semColor:'#f39c12'};
-  if(cS&&cD){
+  if(cS&&cD&&!(st.mornEl&&!st.globalEl)){
     const cEl=nn(cS)>=140||nn(cD)>=90;
     if(cEl&&!st.globalEl) return {text:'PA dentro de objetivos AMPA · Posible bata blanca',color:'#1a5276',bg:'#eaf4fb',badge:'BATA BLANCA',semColor:'#3498db'};
     if(!cEl&&st.globalEl) return {text:'PA elevada según criterios AMPA · Posible HTA enmascarada',color:'#8e44ad',bg:'#f5eef8',badge:'ENMASCARADA',semColor:'#8e44ad'};
   }
+  if(st.globalEl) return {text:'Valores por encima de objetivos AMPA',color:'#c0392b',bg:'#fdecea',badge:'ATENCIÓN',semColor:'#e74c3c'};
+  if(st.mornEl&&!st.aftEl) return {text:'Media global OK · Media mañana por encima del umbral',color:'#b7770d',bg:'#fef9e7',badge:'ATENCIÓN PARCIAL',semColor:'#f39c12'};
   if(st.optimo) return {text:'PA dentro del objetivo óptimo (< 130/80 mmHg)',color:'#1e8449',bg:'#eafaf1',badge:'ÓPTIMO',semColor:'#27ae60'};
   return {text:'PA dentro de objetivos AMPA (< 135/85 mmHg)',color:'#1e8449',bg:'#eafaf1',badge:'CONTROLADA',semColor:'#27ae60'};
 }
