@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AMPA · Farmacia Espejo · Adra</title>
+<title>InformAMPA · Informes de AMPA</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 /* ── UI styles ── */
@@ -34,6 +34,21 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;backgroun
 //  Opción A (uso personal):  apiKey = 'sk-ant-...'
 //  Opción B (versión pública): endpoint = 'https://tu-worker.workers.dev'
 // ════════════════════════════════════════════════════════════════════
+// ─── Identidad de la herramienta ─────────────────────────────────────
+const APP = { name: 'InformAMPA', version: '1.1.0' };
+
+// ─── Datos del establecimiento: vacíos por defecto, los rellena cada
+//     farmacia y se guardan solo en este navegador (localStorage) ─────────
+const PHARM_FIELDS = ['name','phone','address','pharmacist','license'];
+const PHARM = (()=>{ const o={name:'',phone:'',address:'',pharmacist:'',license:''};
+  try{ const s=JSON.parse(localStorage.getItem('informampa_pharm')||'{}'); PHARM_FIELDS.forEach(k=>{ if(typeof s[k]==='string') o[k]=s[k]; }); }catch(e){}
+  return o; })();
+function savePharm(){ try{ localStorage.setItem('informampa_pharm', JSON.stringify(PHARM)); }catch(e){} }
+// Líneas de identificación del establecimiento (HTML ya escapado)
+function pharmLine1(){ return [esc(PHARM.name), PHARM.phone?'Tel. '+esc(PHARM.phone):''].filter(Boolean).join(' &mdash; ') || 'Servicio de Atenci&oacute;n Farmac&eacute;utica'; }
+function pharmLine2(){ return [PHARM.name?'Servicio de Atenci&oacute;n Farmac&eacute;utica':'', esc(PHARM.pharmacist), PHARM.license?'Colegiado n.&ordm; '+esc(PHARM.license):''].filter(Boolean).join(' &middot; '); }
+function pharmLine3(){ return esc(PHARM.address); }
+
 const CFG = {
   endpoint: 'https://ampa-farmacia-espejo.jespejo18.workers.dev',
   apiKey:   '',   // No necesaria — gestionada por Cloudflare Worker
@@ -382,8 +397,8 @@ function buildReport(meas,info,st,status,obs,treatments) {
   const alertaSection=st&&st.alertaDeltas.length>=2?"<div class='section'><div class='section-title'>Efecto de Alerta</div><div style='margin:6px 0'>"+buildAlertaSVG(st.alertaDeltas)+"</div>"+alertaNote+"</div>":"";
   const fcSection=sorted.filter(m=>nn(m.hr)).length>=2?"<div style='margin-top:14px'>"+buildFCSVG(sorted)+"</div>":"";
   const p=[];
-  p.push("<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'><title>Informe AMPA &ndash; Farmacia Espejo</title><style>"+RCSS+"</style></head><body><div class='page'>");
-  p.push("<div class='header'><div><h1>Farmacia Espejo &mdash; Tel. 950 401 678</h1><p>Servicio de Atenci&oacute;n Farmac&eacute;utica &bull; Adra (Almer&iacute;a)</p><p style='margin-top:7px;font-weight:700;font-size:15px;color:#1a5276'>INFORME DE AUTOMEDIDA DE PRESI&Oacute;N ARTERIAL (AMPA)</p></div><div class='header-right'><div class='badge'>AMPA</div><br><span>Fecha de emisi&oacute;n:<br><strong>"+todayS()+"</strong></span></div></div>");
+  p.push("<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'><title>Informe AMPA</title><style>"+RCSS+"</style></head><body><div class='page'>");
+  p.push("<div class='header'><div><h1>"+pharmLine1()+"</h1>"+(pharmLine2()||pharmLine3()?"<p>"+[pharmLine2(),pharmLine3()].filter(Boolean).join(' &bull; ')+"</p>":"")+"<p style='margin-top:7px;font-weight:700;font-size:15px;color:#1a5276'>INFORME DE AUTOMEDIDA DE PRESI&Oacute;N ARTERIAL (AMPA)</p></div><div class='header-right'><div class='badge'>AMPA</div><br><span>Fecha de emisi&oacute;n:<br><strong>"+todayS()+"</strong></span></div></div>");
   p.push("<div class='section'><div class='section-title'>Datos del Registro</div><div class='patient-grid'><div class='patient-cell'><div class='cell-label'>Paciente</div><div class='cell-value'>"+(info.name||'______________________')+"</div></div><div class='patient-cell'><div class='cell-label'>Per&iacute;odo</div><div class='cell-value'>"+period+"</div></div><div class='patient-cell'><div class='cell-label'>D&iacute;as con medici&oacute;n</div><div class='cell-value'>"+(st?st.validDays:'---')+" d&iacute;as</div></div><div class='patient-cell'><div class='cell-label'>Dispositivo</div><div class='cell-value'>"+(info.device||'No especificado')+"</div></div><div class='patient-cell'><div class='cell-label'>Sesiones v&aacute;lidas</div><div class='cell-value'>"+(st?st.totalSessions+' sesiones':'---')+"</div></div><div class='patient-cell'><div class='cell-label'>Cambios de tratamiento</div><div class='cell-value'>"+(tSorted.length>0?tSorted.filter(t=>t.type==='cambio').length+' cambio(s)':'Ninguno registrado')+"</div></div></div>"+(info.clinicSys?"<p style='font-size:11px;color:#777;margin-top:7px'><strong>PA en consulta:</strong> "+info.clinicSys+"/"+info.clinicDia+" mmHg.</p>":"")+"</div>");
   if(tSorted.length>0)p.push("<div class='section'><div class='section-title'>Evoluci&oacute;n del Tratamiento</div><div class='tx-timeline'>"+txHtml+"</div></div>");
   p.push("<div class='section'><div class='section-title'>Resultados Principales</div>"+semHtml+"<div class='summary-cards'>"+cardHtml+"</div>");
@@ -393,10 +408,10 @@ function buildReport(meas,info,st,status,obs,treatments) {
   p.push("<div class='section'><div class='section-title'>Evoluci&oacute;n Temporal</div><div style='margin:6px 0'>"+buildEvolSVG(sorted,tSorted)+"</div>"+barSection+fcSection+"</div>");
   p.push(alertaSection);
   p.push("<div class='section'><div class='section-title'>Observaciones Cl&iacute;nicas</div>"+(obs.length?"<div class='obs-grid'>"+obsHtml+"</div>":"<p style='color:#999;font-style:italic;font-size:12px'>Sin observaciones generadas.</p>")+"</div>");
-  p.push("<div class='section'><div class='section-title'>Metodolog&iacute;a</div><table class='meth'>"+methHtml+"</table></div>");
-  p.push("<div class='section'><div class='section-title'>Referencias</div><div style='font-size:10.5px;color:#444;line-height:2'>(1) McEvoy JW et al. 2024 ESC Guidelines for the management of elevated blood pressure and hypertension. <em>Eur Heart J.</em> 2024;45(38):3912&ndash;4018. doi:10.1093/eurheartj/ehae178<br>(2) Mancia G et al. 2023 ESH Guidelines for the management of arterial hypertension. <em>J Hypertens.</em> 2023;41(12):1874&ndash;2071. doi:10.1097/HJH.0000000000003480<br>(3) Stergiou GS et al. 2021 ESH Practice Guidelines for office and out-of-office blood pressure measurement. <em>J Hypertens.</em> 2021;39(7):1293&ndash;1302. doi:10.1097/HJH.0000000000002843</div></div>");
+  p.push("<div class='section'><div class='section-title'>M&eacute;todo y referencias</div><table class='meth'>"+methHtml+"</table>");
+  p.push("<div style='font-size:10.5px;color:#444;line-height:2;margin-top:10px'><strong>Referencias</strong><br>(1) McEvoy JW et al. 2024 ESC Guidelines for the management of elevated blood pressure and hypertension. <em>Eur Heart J.</em> 2024;45(38):3912&ndash;4018. doi:10.1093/eurheartj/ehae178<br>(2) Mancia G et al. 2023 ESH Guidelines for the management of arterial hypertension. <em>J Hypertens.</em> 2023;41(12):1874&ndash;2071. doi:10.1097/HJH.0000000000003480<br>(3) Stergiou GS et al. 2021 ESH Practice Guidelines for office and out-of-office blood pressure measurement. <em>J Hypertens.</em> 2021;39(7):1293&ndash;1302. doi:10.1097/HJH.0000000000002843</div></div>");
   p.push("<div class='disclaimer'>&#9888; <strong>AVISO:</strong> Este informe tiene car&aacute;cter informativo y recoge &uacute;nicamente los datos de automedida de presi&oacute;n arterial registrados por el paciente. Los resultados deben ser valorados e interpretados por su m&eacute;dico, quien determinar&aacute; las decisiones cl&iacute;nicas oportunas.</div>");
-  p.push("<div class='footer'><div><div class='pharmacy-name'>Farmacia Espejo &mdash; Tel. 950 401 678</div><div>Servicio de Atenci&oacute;n Farmac&eacute;utica &bull; Dr. Jos&eacute; Espejo Guerrero &middot; Colegiado n.&ordm; 507</div><div>Adra (Almer&iacute;a)</div></div><div><div class='sig-line'>Farmac&eacute;utico/a responsable<br>Fecha de emisi&oacute;n: "+todayS()+"</div></div></div>");
+  p.push("<div class='footer'><div><div class='pharmacy-name'>"+pharmLine1()+"</div>"+(pharmLine2()?"<div>"+pharmLine2()+"</div>":"")+(pharmLine3()?"<div>"+pharmLine3()+"</div>":"")+"<div style='color:#999;font-size:9.5px;margin-top:4px'>Generado con "+APP.name+" v"+APP.version+"</div></div><div><div class='sig-line'>Farmac&eacute;utico/a responsable<br>Fecha de emisi&oacute;n: "+todayS()+"</div></div></div>");
   p.push("</div></body></html>");
   return p.join('');
 }
@@ -497,6 +512,20 @@ function buildTab0() {
       ${ST.extractErr?`<div style="color:#e74c3c;font-size:12px;margin-top:10px;padding:8px 12px;background:#ffeaea;border-radius:6px">${ST.extractErr}</div>`:''}
       <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">${btns}</div>
       ${apiNote}
+      ${isImg?`<div style="background:#fdecea;border:1px solid #e74c3c;border-radius:6px;padding:8px 12px;font-size:11px;color:#922b21;margin-top:10px">🔒 <strong>Privacidad:</strong> al extraer datos de una foto, la imagen se envía a un servicio de IA externo (Anthropic). Antes de subirla, tape o recorte el nombre del paciente y cualquier otro dato identificativo.</div>`:''}
+      <div style="font-size:11px;color:#777;margin-top:8px;line-height:1.5">ℹ️ Los cálculos, alertas, gráficos e informes se generan en este navegador; la herramienta no guarda datos de pacientes en ningún servidor. Las funciones IA opcionales (extracción de foto o Excel y borrador de observaciones) envían al servicio de IA las mediciones, fechas y tratamiento, sin el nombre del paciente. El borrador de observaciones debe revisarlo y validarlo el farmacéutico.</div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:800;color:#1a5276;margin-bottom:6px;font-size:14px">Datos del establecimiento <span style="font-weight:600;color:#999;font-size:12px">(opcional)</span></div>
+      <div style="font-size:11px;color:#888;margin-bottom:10px">Aparecen en la cabecera y el pie del informe. Se guardan solo en este navegador.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+        <div><label class="lbl">Farmacia</label><input id="ph-name" class="inp" style="width:100%" value="${esc(PHARM.name)}" placeholder="Nombre de la farmacia" oninput="PHARM.name=this.value;savePharm()"></div>
+        <div><label class="lbl">Teléfono</label><input id="ph-phone" class="inp" style="width:100%" value="${esc(PHARM.phone)}" oninput="PHARM.phone=this.value;savePharm()"></div>
+        <div><label class="lbl">Localidad / dirección</label><input id="ph-address" class="inp" style="width:100%" value="${esc(PHARM.address)}" oninput="PHARM.address=this.value;savePharm()"></div>
+        <div><label class="lbl">Farmacéutico/a</label><input id="ph-pharmacist" class="inp" style="width:100%" value="${esc(PHARM.pharmacist)}" oninput="PHARM.pharmacist=this.value;savePharm()"></div>
+        <div><label class="lbl">N.º colegiado</label><input id="ph-license" class="inp" style="width:100%" value="${esc(PHARM.license)}" oninput="PHARM.license=this.value;savePharm()"></div>
+      </div>
     </div>
 
     <!-- Configuración API (oculta por defecto) -->
@@ -777,8 +806,10 @@ function buildTab2() {
       ⚠️ <strong>AVISO:</strong> Este informe tiene carácter informativo. Los resultados deben ser valorados e interpretados por el médico, quien determinará las decisiones clínicas oportunas.
     </div>
     <div style="text-align:center;padding:10px 0;border-top:2px solid #1a5276">
-      <div style="font-weight:700;color:#1a5276;font-size:14px">Farmacia Espejo · Tel. 950 401 678</div>
-      <div style="font-size:12px;color:#888;margin-top:2px">Dr. José Espejo Guerrero · Colegiado nº 507 · Adra (Almería)</div>
+      <div style="font-weight:700;color:#1a5276;font-size:14px">${pharmLine1()}</div>
+      ${pharmLine2()?`<div style="font-size:12px;color:#888;margin-top:2px">${pharmLine2()}</div>`:''}
+      ${pharmLine3()?`<div style="font-size:12px;color:#888;margin-top:2px">${pharmLine3()}</div>`:''}
+      <div style="font-size:10px;color:#aaa;margin-top:4px">Generado con ${APP.name} v${APP.version}</div>
     </div>
   </div>`;
 }
@@ -791,7 +822,7 @@ function render() {
   const content=ST.tab===0?buildTab0():ST.tab===1?buildTab1():buildTab2();
   document.getElementById('app').innerHTML=`
     <div style="background:linear-gradient(135deg,#1a5276,#2e86c1);padding:14px 16px 0">
-      <div style="font-size:17px;font-weight:900;color:#fff;margin-bottom:10px">AMPA · Farmacia Espejo · Adra</div>
+      <div style="font-size:17px;font-weight:900;color:#fff;margin-bottom:10px">${APP.name} <span style="font-weight:600;font-size:12px;opacity:.8">v${APP.version} · Informes de AMPA</span>${PHARM.name?' <span style="font-weight:600;font-size:13px;opacity:.9">· '+esc(PHARM.name)+'</span>':''}</div>
       <div style="display:flex;gap:2px">${tabBtns}</div>
     </div>
     <div style="max-width:900px;margin:0 auto;padding:14px">${content}</div>
@@ -940,7 +971,7 @@ function doDownloadTemplate() {
   const ws=XLSX.utils.aoa_to_sheet(data);
   ws['!cols']=[{wch:12},{wch:10},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:10}];
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'AMPA');
-  XLSX.writeFile(wb,'plantilla_ampa_farmacia_espejo.xlsx');
+  XLSX.writeFile(wb,'plantilla_informampa.xlsx');
 }
 
 // ─── Generación de observaciones ─────────────────────────────────────
