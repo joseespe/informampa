@@ -23,7 +23,7 @@ node informes_node.js ../informampa.html casos_simulados.json .
 - `generar_casos.py` crea los casos y calcula el resultado esperado de forma independiente, sin redondeos intermedios.
 - `informes_node.js` ejecuta el motor de cálculo de la herramienta, guarda sus resultados en `resultados_herramienta.json` y genera un informe HTML por caso.
 
-## Resultado (v1.1.1)
+## Resultado (v1.1.1 y v1.1.2)
 
 En los seis casos, las medias globales y por franja coinciden con las esperadas, con una diferencia máxima de 0,04 mmHg (por el redondeo a una décima). La desviación estándar coincide también, y los seis estados se clasifican correctamente.
 

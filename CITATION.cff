@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "Si utiliza este software, cítelo como se indica a continuación."
 title: "InformAMPA: herramienta de código abierto para informes estandarizados de automedida de la presión arterial en farmacia comunitaria"
-version: 1.1.1
+version: 1.1.2
 date-released: 2026-11-15
 license: MIT
 repository-code: "https://github.com/joseespe/informampa"

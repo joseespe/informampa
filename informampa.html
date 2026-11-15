@@ -35,7 +35,24 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;backgroun
 //  Opción B (versión pública): endpoint = 'https://tu-worker.workers.dev'
 // ════════════════════════════════════════════════════════════════════
 // ─── Identidad de la herramienta ─────────────────────────────────────
-const APP = { name: 'InformAMPA', version: '1.1.1' };
+const APP = { name: 'InformAMPA', version: '1.1.2' };
+
+// ─── Casos de ejemplo SIMULADOS (no son pacientes reales) para probar la herramienta ───
+const EXAMPLES = [{"id":"S1","nombre":"Control óptimo","desc":"PA bien controlada, por debajo del objetivo óptimo","nota":"","clinic":["",""],"rows":[["2026-03-02","morning",126,80,119,77,115,74,74],["2026-03-02","afternoon",124,75,120,75,120,75,74],["2026-03-03","morning",125,76,117,71,118,71,71],["2026-03-03","afternoon",123,75,118,72,119,74,70],["2026-03-04","morning",133,80,124,77,125,76,70],["2026-03-04","afternoon",126,77,118,73,115,73,73],["2026-03-05","morning",126,79,119,78,118,77,73],["2026-03-05","afternoon",125,75,121,72,121,73,74],["2026-03-06","morning",123,78,118,78,116,78,73],["2026-03-06","afternoon",128,79,119,76,120,74,73],["2026-03-07","morning",127,78,121,76,122,74,74],["2026-03-07","afternoon",127,78,120,74,118,74,74],["2026-03-08","morning",131,77,125,74,123,76,73],["2026-03-08","afternoon",125,75,121,71,121,73,73]]},{"id":"S2","nombre":"Por encima de objetivos","desc":"Media AMPA claramente elevada en ambas franjas","nota":"","clinic":["",""],"rows":[["2026-03-02","morning",156,93,150,93,150,93,78],["2026-03-02","afternoon",153,93,149,90,149,91,82],["2026-03-03","morning",153,101,146,96,145,94,82],["2026-03-03","afternoon",153,94,149,88,148,91,82],["2026-03-04","morning",157,97,151,91,149,94,81],["2026-03-04","afternoon",151,93,148,88,147,87,78],["2026-03-05","morning",154,97,146,92,144,96,80],["2026-03-05","afternoon",156,92,145,91,148,92,79],["2026-03-06","morning",163,95,155,95,154,94,78],["2026-03-06","afternoon",157,92,146,90,147,89,81],["2026-03-07","morning",158,97,147,94,151,94,79],["2026-03-07","afternoon",147,95,142,92,144,92,80],["2026-03-08","morning",156,97,147,94,149,95,81],["2026-03-08","afternoon",151,95,144,91,143,88,80]]},{"id":"S3","nombre":"Elevación matutina aislada","desc":"Media global controlada con media de mañana >=135/85","nota":"","clinic":["",""],"rows":[["2026-03-02","morning",144,89,136,83,135,86,74],["2026-03-02","afternoon",127,79,118,73,118,76,71],["2026-03-03","morning",146,91,137,90,139,87,74],["2026-03-03","afternoon",128,80,119,76,120,76,70],["2026-03-04","morning",143,91,135,84,138,86,70],["2026-03-04","afternoon",125,80,119,76,120,74,72],["2026-03-05","morning",149,85,140,82,141,82,70],["2026-03-05","afternoon",133,79,124,78,125,80,73],["2026-03-06","morning",146,91,140,90,142,89,74],["2026-03-06","afternoon",125,80,120,77,118,78,72],["2026-03-07","morning",145,89,140,85,140,86,72],["2026-03-07","afternoon",124,79,117,76,118,80,70],["2026-03-08","morning",146,93,138,90,138,86,71],["2026-03-08","afternoon",127,79,122,78,120,78,71]]},{"id":"S4","nombre":"Reacción de alerta el primer día","desc":"Día 1 muy elevado; resto controlado. Se excluye el día 1 (ESH 2021)","nota":"El primer día muestra una reacción de alerta. Para excluirlo, como recomienda la ESH, elimine sus dos sesiones en «2. Mediciones».","clinic":["",""],"rows":[["2026-03-02","morning",168,98,164,98,163,96,70],["2026-03-02","afternoon",157,92,152,91,151,90,74],["2026-03-03","morning",128,82,123,75,123,77,72],["2026-03-03","afternoon",125,76,115,75,114,73,73],["2026-03-04","morning",132,80,127,77,125,76,73],["2026-03-04","afternoon",129,82,124,80,123,77,71],["2026-03-05","morning",133,77,127,78,128,74,72],["2026-03-05","afternoon",130,80,121,77,119,76,74],["2026-03-06","morning",133,82,122,81,125,82,74],["2026-03-06","afternoon",124,77,116,75,117,76,70],["2026-03-07","morning",130,79,123,77,125,77,73],["2026-03-07","afternoon",128,76,121,75,120,74,74],["2026-03-08","morning",125,78,120,79,119,76,74],["2026-03-08","afternoon",125,78,114,76,116,75,74]]},{"id":"S5","nombre":"Sesión aislada elevada + bata blanca","desc":"Una sesión vespertina elevada (simula omisión de dosis); PA en consulta 152/94","nota":"Se ha introducido una PA en consulta de 152/94 mmHg. Observe la sesión vespertina del 05/03 marcada como elevada.","clinic":["152","94"],"rows":[["2026-03-02","morning",126,80,119,76,122,74,72],["2026-03-02","afternoon",127,77,118,73,119,70,71],["2026-03-03","morning",128,82,125,78,121,76,72],["2026-03-03","afternoon",127,76,117,73,119,75,72],["2026-03-04","morning",131,81,125,77,124,79,72],["2026-03-04","afternoon",129,78,121,75,119,77,73],["2026-03-05","morning",129,79,120,77,122,78,74],["2026-03-05","afternoon",153,93,146,89,148,88,74],["2026-03-06","morning",133,81,126,76,127,78,70],["2026-03-06","afternoon",128,77,123,75,122,76,73],["2026-03-07","morning",127,80,120,77,120,74,74],["2026-03-07","afternoon",126,76,121,75,118,73,72],["2026-03-08","morning",132,78,122,76,125,75,70],["2026-03-08","afternoon",129,75,124,71,120,72,73]]},{"id":"S6","nombre":"HTA enmascarada","desc":"AMPA elevada con PA en consulta normal (128/80)","nota":"Se ha introducido una PA en consulta de 128/80 mmHg.","clinic":["128","80"],"rows":[["2026-03-02","morning",149,95,140,90,139,92,74],["2026-03-02","afternoon",147,87,140,83,142,86,74],["2026-03-03","morning",153,92,147,87,146,87,73],["2026-03-03","afternoon",144,88,138,87,136,88,73],["2026-03-04","morning",152,92,144,87,143,88,72],["2026-03-04","afternoon",146,91,135,89,135,90,73],["2026-03-05","morning",146,93,141,92,139,91,72],["2026-03-05","afternoon",145,88,138,83,136,86,70],["2026-03-06","morning",150,91,142,85,140,87,71],["2026-03-06","afternoon",149,88,142,86,141,87,73],["2026-03-07","morning",155,92,148,89,145,92,71],["2026-03-07","afternoon",142,90,134,86,136,88,72],["2026-03-08","morning",151,90,145,89,145,87,71],["2026-03-08","afternoon",146,93,141,90,138,88,72]]}];
+let _exSel = 'S1';
+function loadExample(id) {
+  const e = EXAMPLES.find(x => x.id === id); if (!e) return;
+  if (ST.meas.length && !ST.isExample && !confirmReplace()) return;
+  ST.meas = e.rows.map((r, i) => ({id: i + 1, date: r[0], session: r[1], r1sys: r[2], r1dia: r[3], r1time: r[1]==='morning'?'08:00':'20:00',
+    r2sys: r[4], r2dia: r[5], r2time: r[1]==='morning'?'08:02':'20:02', r3sys: r[6], r3dia: r[7], r3time: r[1]==='morning'?'08:04':'20:04', hr: r[8]}));
+  ST.treatments = []; ST.obs = [];
+  ST.info = {name: '', device: 'Caso de ejemplo ' + e.id + ' (datos simulados)', clinicSys: e.clinic[0], clinicDia: e.clinic[1]};
+  ST.isExample = e.id; setTab(2);
+}
+// Aviso sin diálogos del navegador: solo se reemplazan datos reales si el usuario pulsa dos veces
+let _replaceArmed = false;
+function confirmReplace() { if (_replaceArmed) { _replaceArmed = false; return true; } _replaceArmed = true; render(); return false; }
+
 
 // ─── Datos del establecimiento: vacíos por defecto, los rellena cada
 //     farmacia y se guardan solo en este navegador (localStorage) ─────────
@@ -432,6 +449,7 @@ const ST = {
   meas: [],
   treatments: [],
   info: {name:'', device:'', clinicSys:'', clinicDia:''},
+  isExample: '',
   obs: [],
   loadObs: false,
   dragging: false,
@@ -506,6 +524,17 @@ function buildTab0() {
     : `<div style="background:#fef9e7;border:1px solid #f39c12;border-radius:6px;padding:8px 12px;font-size:11px;color:#7d6608;margin-top:10px">⚠️ Sin API configurada · Extracción de foto, Excel con IA y observaciones clínicas no disponibles · <a href="#" onclick="document.getElementById('api-config').style.display='block';return false" style="color:#1a5276;font-weight:700">Configurar →</a></div>`;
 
   return `<div>
+    <div class="card" style="border:2px dashed #2e86c1;background:#f4f9fd">
+      <div style="font-weight:800;color:#1a5276;margin-bottom:6px;font-size:14px">🧪 Probar con un caso de ejemplo</div>
+      <div style="font-size:12px;color:#555;margin-bottom:10px">Carga un registro <strong>simulado</strong> (no es un paciente real) y muestra el informe al instante, sin introducir datos.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="ex-sel" class="inp" style="flex:1;min-width:220px" onchange="_exSel=this.value;render()">${EXAMPLES.map(e=>`<option value="${e.id}" ${_exSel===e.id?'selected':''}>${e.id} · ${esc(e.nombre)}</option>`).join('')}</select>
+        <button class="btn" style="background:#2e86c1;color:#fff" onclick="loadExample(_exSel)">Cargar ejemplo</button>
+      </div>
+      <div style="font-size:11px;color:#777;margin-top:8px">${esc((EXAMPLES.find(e=>e.id===_exSel)||{}).desc||'')}</div>
+      ${_replaceArmed?`<div style="color:#922b21;background:#fdecea;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:8px">Hay mediciones introducidas. Pulse «Cargar ejemplo» otra vez para sustituirlas por el caso simulado.</div>`:''}
+      ${ST.isExample?`<div style="color:#1e8449;font-size:12px;margin-top:8px">✓ Cargado el caso simulado ${ST.isExample}. ${esc((EXAMPLES.find(e=>e.id===ST.isExample)||{}).nota||'')}</div>`:''}
+    </div>
     <div class="card">
       <div style="font-weight:800;color:#1a5276;margin-bottom:12px;font-size:14px">📎 Foto o Excel del registro</div>
       <div class="drop-zone${ST.dragging?' drag-over':''}"
