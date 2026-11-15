@@ -20,7 +20,9 @@ Herramienta de código abierto para generar en la farmacia comunitaria informes 
 El informe tiene carácter informativo, no constituye un diagnóstico y debe ser valorado por el médico.
 
 ## Cómo citar
-Espejo Guerrero J, Espejo Martín O, Espejo Martín J. InformAMPA v1.1.0 [software]. Zenodo; 2026. doi:10.5281/zenodo.XXXXXXX
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24242922.svg)](https://doi.org/10.5281/zenodo.24242922)
+Espejo Guerrero J, Espejo Martín O, Espejo Martín J. InformAMPA v1.1.0 [software]. Zenodo; 2026. doi:10.5281/zenodo.24242922
 
 ## Licencia
 MIT. Consulta el archivo [LICENSE](LICENSE).
